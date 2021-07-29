@@ -94,7 +94,7 @@ def parse_args(parser):
     optimization.add_argument('--optimizer', type=str, default='lamb',
                               help='Optimization algorithm')
     optimization.add_argument('-lr', '--learning-rate', type=float, required=True,
-                              help='Learing rate')
+                              help='Learning rate')
     optimization.add_argument('--weight-decay', default=1e-6, type=float,
                               help='Weight decay')
     optimization.add_argument('--grad-clip-thresh', default=1000.0, type=float,

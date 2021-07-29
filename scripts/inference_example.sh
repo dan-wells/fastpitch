@@ -16,6 +16,6 @@ python inference.py --cuda \
                     -o ${OUTPUT_DIR} \
                     --fastpitch ${FASTPITCH} \
                     --waveglow ${WAVEGLOW} \
-		    --wn-channels 256 \
+                    --wn-channels 256 \
                     --batch-size ${BS} \
                     ${AMP_FLAG}

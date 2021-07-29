@@ -58,7 +58,7 @@ def parse_args(parser):
     Parse commandline arguments.
     """
     parser.add_argument('-i', '--input', type=str, required=True,
-                        help='Full path to the input text (phareses separated by newlines)')
+                        help='Full path to the input text (phrases separated by newlines)')
     parser.add_argument('-o', '--output', default=None,
                         help='Output folder to save audio (file per phrase)')
     parser.add_argument('--log-file', type=str, default=None,
