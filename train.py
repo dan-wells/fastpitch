@@ -399,7 +399,7 @@ def main():
     else:
         train_sampler, shuffle = None, True
 
-    train_loader = DataLoader(trainset, num_workers=16, shuffle=shuffle,
+    train_loader = DataLoader(trainset, num_workers=8, shuffle=shuffle,
                               sampler=train_sampler, batch_size=args.batch_size,
                               pin_memory=False, drop_last=True,
                               collate_fn=collate_fn)
