@@ -120,6 +120,12 @@ def parse_args(parser):
                          help='Type of text cleaners for input text')
     dataset.add_argument('--symbol-set', type=str, default='english_basic',
                          help='Define symbol set for input text')
+    dataset.add_argument('--input-type', type=str, default='char',
+                         choices=['char', 'phone'],
+                         help='Input symbols used, either char (text) or phone symbols.')
+    # TODO: integrate this with --symbol-set
+    dataset.add_argument('--phone-set', default=None,
+                         help='Phone set if using phone input symbols')
 
     cond = parser.add_argument_group('conditioning on additional attributes')
     cond.add_argument('--n-speakers', type=int, default=1,

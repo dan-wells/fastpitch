@@ -4,6 +4,7 @@ import numpy as np
 from . import cleaners
 from .symbols import get_symbols
 from .cmudict import CMUDict
+from .combilex import combilex_phones
 from .numerical import _currency_re, _expand_currency
 
 
@@ -26,6 +27,23 @@ def lines_to_list(filename):
         lines = f.readlines()
     lines = [l.rstrip() for l in lines]
     return lines
+
+
+class PhoneProcessing(object):
+    def __init__(self, phone_set=None):
+        self.sil_phones = ['sil', 'sp', 'spn']
+
+        # TODO: default phone set should use PanPhon IPA
+        if phone_set is None:
+            raise NotImplementedError( "Please specify an explicit phone set")
+        if phone_set == 'combilex':
+            self.symbols = self.sil_phones + combilex_phones
+
+        self.symbol_to_id = {s: i for i, s in enumerate(self.symbols)}
+        self.id_to_symbol = {i: s for i, s in enumerate(self.symbols)}
+
+    def encode_text(self, text):
+        return [self.symbol_to_id[s] for s in text.split(' ')]
 
 
 class TextProcessing(object):

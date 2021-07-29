@@ -45,7 +45,7 @@ from dllogger import StdOutBackend, JSONStreamBackend, Verbosity
 from common import utils
 from common.tb_dllogger import (init_inference_metadata, stdout_metric_format,
                                 unique_log_fpath)
-from common.text.text_processing import TextProcessing
+from common.text.text_processing import TextProcessing, PhoneProcessing
 from pitch_transform import pitch_transform_custom
 from waveglow import model as glow
 from waveglow.denoiser import Denoiser
@@ -117,6 +117,12 @@ def parse_args(parser):
                                  help='Type of text cleaners for input text')
     text_processing.add_argument('--symbol-set', type=str, default='english_basic',
                                  help='Define symbol set for input text')
+    text_processing.add_argument('--input-type', type=str, default='char',
+                                 choices=['char', 'phone'],
+                                 help='Input symbols used, either char (text) or phone symbols.')
+    # TODO: integrate this with --symbol-set
+    text_processing.add_argument('--phone-set', default=None,
+                                 help='Phone set if using phone input symbols')
 
     cond = parser.add_argument_group('conditioning on additional attributes')
     cond.add_argument('--n-speakers', type=int, default=1,
@@ -184,9 +190,13 @@ def load_fields(fpath):
 
 
 def prepare_input_sequence(fields, device, symbol_set, text_cleaners,
+                           input_type, phone_set,
                            batch_size=128, dataset=None, load_mels=False,
                            load_pitch=False):
-    tp = TextProcessing(symbol_set, text_cleaners)
+    if input_type == 'char':
+        tp = TextProcessing(symbol_set, text_cleaners)
+    else:
+        tp = PhoneProcessing(phone_set)
 
     fields['text'] = [torch.LongTensor(tp.encode_text(text))
                       for text in fields['text']]
@@ -316,8 +326,9 @@ def main():
 
     fields = load_fields(args.input)
     batches = prepare_input_sequence(
-        fields, device, args.symbol_set, args.text_cleaners, args.batch_size,
-        args.dataset_path, load_mels=(generator is None))
+        fields, device, args.symbol_set, args.text_cleaners,
+        args.input_type, args.phone_set,
+        args.batch_size, args.dataset_path, load_mels=(generator is None))
 
     if args.include_warmup:
         # Use real data rather than synthetic - FastPitch predicts len

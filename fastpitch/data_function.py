@@ -31,7 +31,7 @@ import torch
 
 from common.utils import to_gpu
 from tacotron2.data_function import TextMelLoader
-from common.text.text_processing import TextProcessing
+from common.text.text_processing import TextProcessing, PhoneProcessing
 
 
 class TextMelAliLoader(TextMelLoader):
@@ -39,7 +39,10 @@ class TextMelAliLoader(TextMelLoader):
     """
     def __init__(self, **kwargs):
         super(TextMelAliLoader, self).__init__(**kwargs)
-        self.tp = TextProcessing(kwargs['symbol_set'], kwargs['text_cleaners'])
+        if kwargs['input_type'] == 'phone':
+            self.tp = PhoneProcessing(kwargs['phone_set'])
+        else:
+            self.tp = TextProcessing(kwargs['symbol_set'], kwargs['text_cleaners'])
         self.n_speakers = kwargs['n_speakers']
         if len(self.audiopaths_and_text[0]) != 4 + (kwargs['n_speakers'] > 1):
             raise ValueError('Expected four columns in audiopaths file for single speaker model. \n'
