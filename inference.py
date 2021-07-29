@@ -287,7 +287,7 @@ def main():
     torch.backends.cudnn.benchmark = args.cudnn_benchmark
 
     if args.output is not None:
-        Path(args.output).mkdir(parents=False, exist_ok=True)
+        Path(args.output).mkdir(parents=True, exist_ok=True)
 
     log_fpath = args.log_file or str(Path(args.output, 'nvlog_infer.json'))
     log_fpath = unique_log_fpath(log_fpath)
