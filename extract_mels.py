@@ -31,6 +31,7 @@ import time
 from pathlib import Path
 
 import parselmouth
+import tgt
 import torch
 import dllogger as DLLogger
 import numpy as np
@@ -40,7 +41,7 @@ from torch.utils.data import DataLoader
 from common import utils
 from inference import load_and_setup_model
 from tacotron2.data_function import TextMelLoader, TextMelCollate, batch_to_gpu
-from common.text.text_processing import TextProcessing
+from common.text.text_processing import TextProcessing, PhoneProcessing
 
 
 def parse_args(parser):
@@ -62,6 +63,12 @@ def parse_args(parser):
                         help='Type of text cleaners for input text')
     parser.add_argument('--symbol-set', type=str, default='english_basic',
                         help='Define symbol set for input text')
+    parser.add_argument('--input-type', type=str, default='char',
+                         choices=['char', 'phone'],
+                         help='Input symbols used, either char (text) or phone symbols.')
+    # TODO: integrate this with --symbol-set
+    parser.add_argument('--phone-set', default=None,
+                         help='Phone set if using phone input symbols')
     parser.add_argument('--max-wav-value', default=32768.0, type=float,
                         help='Maximum audiowave value')
     parser.add_argument('--sampling-rate', default=22050, type=int,
@@ -72,6 +79,8 @@ def parse_args(parser):
                         help='Hop (stride) length')
     parser.add_argument('--win-length', default=1024, type=int,
                         help='Window length')
+    parser.add_argument('--n-mel-channels', default=80, type=int,
+                        help='Number of bins in mel-spectrograms')
     parser.add_argument('--mel-fmin', default=0.0, type=float,
                         help='Minimum mel frequency')
     parser.add_argument('--mel-fmax', default=8000.0, type=float,
@@ -82,9 +91,11 @@ def parse_args(parser):
     parser.add_argument('--extract-mels-teacher', action='store_true',
                         help='Extract Taco-generated mel-spectrograms for KD')
     parser.add_argument('--extract-durations', action='store_true',
-                        help='Extract char durations from attention matrices')
+                        help='Extract char durations from Tacotron2 attention matrices')
     parser.add_argument('--extract-attentions', action='store_true',
-                        help='Extract full attention matrices')
+                        help='Extract full attention matrices from Tacotron2')
+    parser.add_argument('--extract-durs-from-textgrids', action='store_true',
+                        help='Extract char durations from Praat TextGrids.')
     parser.add_argument('--extract-pitch-mel', action='store_true',
                         help='Extract pitch')
     parser.add_argument('--extract-pitch-char', action='store_true',
@@ -104,7 +115,10 @@ class FilenamedLoader(TextMelLoader):
         kwargs['audiopaths_and_text'] = kwargs['wav_text_filelist']
         kwargs['load_mel_from_disk'] = False
         super(FilenamedLoader, self).__init__(**kwargs)
-        self.tp = TextProcessing(kwargs['symbol_set'], kwargs['text_cleaners'])
+        if kwargs['input_type'] == 'phone':
+            self.tp = PhoneProcessing(kwargs['phone_set'])
+        else:
+            self.tp = TextProcessing(kwargs['symbol_set'], kwargs['text_cleaners'])
         self.filenames = filenames
 
     def __getitem__(self, index):
@@ -132,6 +146,36 @@ def dur_chunk_sizes(n, ary):
     ret[:n % ary] = n // ary + 1
     assert ret.sum() == n
     return ret
+
+
+def parse_textgrid(tier, sampling_rate, hop_length):
+    # latest MFA replaces silence phones with "" in output TextGrids
+    sil_phones = ["sil", "sp", "spn", ""]
+    start_time = tier[0].start_time
+    end_time = tier[-1].end_time
+    phones = []
+    durations = []
+    for i, t in enumerate(tier._objects):
+        s, e, p = t.start_time, t.end_time, t.text
+        if p not in sil_phones:
+            phones.append(p)
+        else:
+            if (i == 0) or (i == len(tier) - 1):
+                # leading or trailing silence
+                phones.append("sil")
+            else:
+                # short pause between words
+                phones.append("sp")
+        durations.append(int(np.ceil(e * sampling_rate / hop_length)
+                             - np.ceil(s * sampling_rate / hop_length)))
+    return phones, durations, start_time, end_time
+
+
+def fix_duration_mismatch(durs, mel_len):
+    durs = durs.copy()
+    length_diff = mel_len - sum(durs)
+    durs[-1] += length_diff
+    return durs
 
 
 def calculate_pitch(wav, durs):
@@ -193,28 +237,32 @@ def main():
         raise ValueError(f'Invalid options {unk_args}')
 
     if args.extract_pitch_char:
-        assert args.extract_durations, "Durations required for pitch extraction"
+        assert args.extract_durations or args.extract_durs_from_textgrids, \
+            "Durations required for pitch extraction"
 
     DLLogger.init(backends=[JSONStreamBackend(Verbosity.DEFAULT, args.log_file),
                             StdOutBackend(Verbosity.VERBOSE)])
     for k,v in vars(args).items():
         DLLogger.log(step="PARAMETER", data={k:v})
 
-    model = load_and_setup_model(
-        'Tacotron2', parser, args.tacotron2_checkpoint, amp=False,
-        device=torch.device('cuda' if args.cuda else 'cpu'),
-        forward_is_infer=False, ema=False)
+    if args.extract_mels_teacher or args.extract_durations or args.extract_attentions:
+        model = load_and_setup_model(
+            'Tacotron2', parser, args.tacotron2_checkpoint, amp=False,
+            device=torch.device('cuda' if args.cuda else 'cpu'),
+            forward_is_infer=False, ema=False)
 
-    if args.train_mode:
-        model.train()
+        if args.train_mode:
+            model.train()
 
-    # n_mel_channels arg has been consumed by model's arg parser
-    args.n_mel_channels = model.n_mel_channels
+        # n_mel_channels arg has been consumed by model's arg parser
+        args.n_mel_channels = model.n_mel_channels
 
     for datum in ('mels', 'mels_teacher', 'attentions', 'durations',
                   'pitch_mel', 'pitch_char', 'pitch_trichar'):
         if getattr(args, f'extract_{datum}'):
             Path(args.dataset_path, datum).mkdir(parents=False, exist_ok=True)
+        if getattr(args, 'extract_durs_from_textgrids'):
+            Path(args.dataset_path, 'durations').mkdir(parents=False, exist_ok=True)
 
     filenames = [Path(l.split('|')[0]).stem
                  for l in open(args.wav_text_filelist, 'r')]
@@ -237,8 +285,9 @@ def main():
             fpath = Path(args.dataset_path, 'mels', fnames[j] + '.pt')
             torch.save(mel[:, :mel_lens[j]].cpu(), fpath)
 
-        with torch.no_grad():
-            out_mels, out_mels_postnet, _, alignments = model.forward(x)
+        if args.extract_mels_teacher or args.extract_durations or args.extract_attentions:
+            with torch.no_grad():
+                out_mels, out_mels_postnet, _, alignments = model.forward(x)
 
         if args.extract_mels_teacher:
             for j, mel in enumerate(out_mels_postnet):
@@ -249,13 +298,32 @@ def main():
                 ali = ali[:mel_lens[j],:text_lens[j]]
                 fpath = Path(args.dataset_path, 'attentions', fnames[j] + '.pt')
                 torch.save(ali.cpu(), fpath)
-        durations = []
         if args.extract_durations:
+            durations = []
             for j, ali in enumerate(alignments):
                 text_len = text_lens[j]
                 ali = ali[:mel_lens[j],:text_len]
                 dur = torch.histc(torch.argmax(ali, dim=1), min=0,
                                   max=text_len-1, bins=text_len)
+                durations.append(dur)
+                fpath = Path(args.dataset_path, 'durations', fnames[j] + '.pt')
+                torch.save(dur.cpu().int(), fpath)
+        if args.extract_durs_from_textgrids:
+            durations = []
+            for j, mel_len in enumerate(mel_lens):
+                # TODO: Something better than forcing consistent filepaths between
+                # wavs and TextGrids
+                tg_path = Path(args.dataset_path, 'TextGrid', fnames[j] + '.TextGrid')
+                try:
+                    textgrid = tgt.io.read_textgrid(tg_path, include_empty_intervals=True)
+                except FileNotFoundError:
+                    print('Expected consistent filepaths between wavs and TextGrids, e.g.')
+                    print('  /path/to/wavs/speaker_uttID.wav -> /path/to/TextGrid/speaker_uttID.TextGrid')
+                    raise
+                phones, durs, start, end = parse_textgrid(
+                    textgrid.get_tier_by_name('phones'), args.sampling_rate, args.hop_length)
+                assert sum(durs) == mel_len, f'Length mismatch: {fnames[j]}, {sum(durs)} != {mel_len}'
+                dur = torch.LongTensor(durs)
                 durations.append(dur)
                 fpath = Path(args.dataset_path, 'durations', fnames[j] + '.pt')
                 torch.save(dur.cpu().int(), fpath)
