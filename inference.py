@@ -79,6 +79,8 @@ def parse_args(parser):
                         help='Sampling rate')
     parser.add_argument('--stft-hop-length', type=int, default=256,
                         help='STFT hop length for estimating audio length from mel size')
+    parser.add_argument('--save-mels', action='store_true',
+                        help='Save generated mel spectrograms from FastPitch')
     parser.add_argument('--amp', action='store_true',
                         help='Inference with AMP')
     parser.add_argument('-bs', '--batch-size', type=int, default=64)
@@ -377,6 +379,13 @@ def main():
                 all_frames += mel.size(0) * mel.size(2)
                 log(rep, {"fastpitch_frames/s": gen_infer_perf})
                 log(rep, {"fastpitch_latency": gen_measures[-1]})
+
+                if args.save_mels and args.output is not None and reps == 1:
+                    for i, msf in enumerate(mel):
+                        msf = msf[:, :mel_lens[i]]
+                        fname = b['mel_output'][i] if 'mel_output' in b else f'mel_{i}.pt'
+                        mel_path = Path(args.output, fname)
+                        torch.save(msf, mel_path)
 
             if waveglow is not None:
                 with torch.no_grad(), waveglow_measures:
