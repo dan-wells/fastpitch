@@ -71,6 +71,8 @@ def parse_args(parser):
                          help='Phone set if using phone input symbols')
     parser.add_argument('--max-wav-value', default=32768.0, type=float,
                         help='Maximum audiowave value')
+    parser.add_argument('--peak-norm', action='store_true',
+                        help='Apply peak normalization to audio')
     parser.add_argument('--sampling-rate', default=22050, type=int,
                         help='Sampling rate')
     parser.add_argument('--filter-length', default=1024, type=int,

@@ -55,6 +55,7 @@ class TextMelLoader(torch.utils.data.Dataset):
                  win_length=None,
                  mel_fmin=None,
                  mel_fmax=None,
+                 peak_norm=False,
                  **ignored):
         self.audiopaths_and_text = load_filepaths_and_text(
             dataset_path, audiopaths_and_text,
@@ -62,6 +63,7 @@ class TextMelLoader(torch.utils.data.Dataset):
         self.load_mel_from_disk = load_mel_from_disk
         if not load_mel_from_disk:
             self.max_wav_value = max_wav_value
+            self.peak_norm = peak_norm
             self.sampling_rate = sampling_rate
             self.stft = layers.TacotronSTFT(
                 filter_length, hop_length, win_length,
@@ -73,6 +75,8 @@ class TextMelLoader(torch.utils.data.Dataset):
             if sampling_rate != self.stft.sampling_rate:
                 raise ValueError("{} {} SR doesn't match target {} SR".format(
                     sampling_rate, self.stft.sampling_rate))
+            if self.peak_norm:
+                audio = (audio / torch.max(torch.abs(audio))) * (self.max_wav_value - 1)
             audio_norm = audio / self.max_wav_value
             audio_norm = audio_norm.unsqueeze(0)
             audio_norm = torch.autograd.Variable(audio_norm, requires_grad=False)
