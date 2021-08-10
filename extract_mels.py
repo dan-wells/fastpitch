@@ -175,13 +175,6 @@ def parse_textgrid(tier, sampling_rate, hop_length):
     return phones, durations, start_time, end_time
 
 
-def fix_duration_mismatch(durs, mel_len):
-    durs = durs.copy()
-    length_diff = mel_len - sum(durs)
-    durs[-1] += length_diff
-    return durs
-
-
 def calculate_pitch(wav, durs, start=None, end=None):
     mel_len = durs.sum()
     durs_cum = np.cumsum(np.pad(durs, (1, 0)))
