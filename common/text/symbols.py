@@ -25,12 +25,13 @@ def get_symbols(symbol_set='english_basic'):
         _letters = 'abcdefghijklmnopqrstuvwxyz'
         symbols = list(_pad + _special + _punctuation + _letters) + _arpabet
     elif symbol_set == 'english_expanded':
+        _pad = '_'
         _punctuation = '!\'",.:;? '
         _math = '#%&*+-/[]()'
         _special = '_@©°½—₩€$'
         _accented = 'áçéêëñöøćž'
         _letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
-        symbols = list(_punctuation + _math + _special + _accented + _letters) + _arpabet
+        symbols = list(_pad + _punctuation + _math + _special + _accented + _letters) + _arpabet
     else:
         raise Exception("{} symbol set does not exist".format(symbol_set))
 

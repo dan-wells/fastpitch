@@ -31,13 +31,14 @@ def lines_to_list(filename):
 
 class PhoneProcessing(object):
     def __init__(self, phone_set=None):
+        _pad = ["<pad>"]
         self.sil_phones = ['sil', 'sp', 'spn']
 
         # TODO: default phone set should use PanPhon IPA
         if phone_set is None:
             raise NotImplementedError( "Please specify an explicit phone set")
         if phone_set == 'combilex':
-            self.symbols = self.sil_phones + combilex_phones
+            self.symbols = _pad + self.sil_phones + combilex_phones
 
         self.symbol_to_id = {s: i for i, s in enumerate(self.symbols)}
         self.id_to_symbol = {i: s for i, s in enumerate(self.symbols)}
