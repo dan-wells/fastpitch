@@ -96,14 +96,16 @@ def parse_args(parser):
                         help='Extract char durations from Tacotron2 attention matrices')
     parser.add_argument('--extract-attentions', action='store_true',
                         help='Extract full attention matrices from Tacotron2')
-    parser.add_argument('--extract-durs-from-textgrids', action='store_true',
-                        help='Extract char durations from Praat TextGrids.')
     parser.add_argument('--extract-pitch-mel', action='store_true',
                         help='Extract pitch')
     parser.add_argument('--extract-pitch-char', action='store_true',
                         help='Extract pitch averaged over input characters')
     parser.add_argument('--extract-pitch-trichar', action='store_true',
                         help='Extract pitch averaged over input characters')
+    parser.add_argument('--extract-durs-from-textgrids', action='store_true',
+                        help='Extract char durations from Praat TextGrids')
+    parser.add_argument('--trim-silence', action='store_true',
+                        help='Trim leading and trailing silences from audio using TextGrids')
     parser.add_argument('--train-mode', action='store_true',
                         help='Run the model in .train() mode')
     parser.add_argument('--cuda', action='store_true',
@@ -180,10 +182,11 @@ def fix_duration_mismatch(durs, mel_len):
     return durs
 
 
-def calculate_pitch(wav, durs):
+def calculate_pitch(wav, durs, start=None, end=None):
     mel_len = durs.sum()
     durs_cum = np.cumsum(np.pad(durs, (1, 0)))
     snd = parselmouth.Sound(wav)
+    snd = snd.extract_part(from_time=start, to_time=end)
     pitch = snd.to_pitch(time_step=snd.duration / (mel_len + 3)
                          ).selected_array['frequency']
     assert np.abs(mel_len - pitch.shape[0]) <= 1.0
@@ -311,7 +314,10 @@ def main():
                 fpath = Path(args.dataset_path, 'durations', fnames[j] + '.pt')
                 torch.save(dur.cpu().int(), fpath)
         if args.extract_durs_from_textgrids:
+            texts = []
             durations = []
+            start_times = []
+            end_times = []
             for j, mel_len in enumerate(mel_lens):
                 # TODO: Something better than forcing consistent filepaths between
                 # wavs and TextGrids
@@ -324,6 +330,9 @@ def main():
                     raise
                 phones, durs, start, end = parse_textgrid(
                     textgrid.get_tier_by_name('phones'), args.sampling_rate, args.hop_length)
+                texts.append(phones)
+                start_times.append(start)
+                end_times.append(end)
                 assert sum(durs) == mel_len, f'Length mismatch: {fnames[j]}, {sum(durs)} != {mel_len}'
                 dur = torch.LongTensor(durs)
                 durations.append(dur)
@@ -333,10 +342,48 @@ def main():
             for j, dur in enumerate(durations):
                 fpath = Path(args.dataset_path, 'pitch_char', fnames[j] + '.pt')
                 wav = Path(args.dataset_path, 'wavs', fnames[j] + '.wav')
-                p_mel, p_char, p_trichar = calculate_pitch(str(wav), dur.cpu().numpy())
+                if args.trim_silence:
+                    p_mel, p_char, p_trichar = calculate_pitch(str(wav), dur.cpu().numpy(),
+                                                               start_times[j], end_times[j])
+                else:
+                    p_mel, p_char, p_trichar = calculate_pitch(str(wav), dur.cpu().numpy())
                 pitch_vecs['mel'][fnames[j]] = p_mel
                 pitch_vecs['char'][fnames[j]] = p_char
                 pitch_vecs['trichar'][fnames[j]] = p_trichar
+        if args.trim_silence:
+            assert args.extract_durs_from_textgrids, \
+                "Can only trim silences based on TextGrid alignments"
+            for j, text in enumerate(texts):
+                text = np.array(text)
+                sil_idx = np.where(text == 'sil')
+                if len(sil_idx[0]) == 2:
+                    # trim both sides
+                    trim_start, trim_end = durations[j][sil_idx]
+                    trim_end = -trim_end
+                elif sil_idx[0][0] == 0:
+                    # trim only leading silence
+                    trim_start, trim_end = durations[j][0], None
+                elif sil_idx[0][0] == len(texts) - 1:
+                    # trim only trailing silence
+                    trim_start, trim_end = None, -durations[j][-1]
+                sil_mask = text != "sil"
+                mel = mels_padded[j][:, :mel_lens[j]].cpu()
+                mel = mel[:, trim_start:trim_end]
+                dur = durations[j]
+                dur = dur[sil_mask]
+                assert mel.shape[1] == sum(dur), \
+                    "{}: Trimming led to mismatched durations ({}) and mels ({})".format(
+                        fnames[j], sum(dur), mel.shape[1])
+                # TODO: Not handling mel- or trichar-level pitch_vecs yet
+                pitch = pitch_vecs['char'][fnames[j]]
+                pitch = pitch[sil_mask]
+                pitch_vecs['char'][fnames[j]] = pitch
+                assert len(pitch) == len(dur), \
+                    "{}: Trimming led to mismatched durations ({}) and pitches ({})".format(
+                        fnames[j], len(dur), len(pitch))
+                # save mels and durs again (sorry). pitches saved below
+                torch.save(mel, Path(args.dataset_path, 'mels', fnames[j] + '.pt'))
+                torch.save(dur, Path(args.dataset_path, 'durations', fnames[j] + '.pt'))
 
         nseconds = time.time() - tik
         DLLogger.log(step=f'{i+1}/{len(data_loader)} ({nseconds:.2f}s)', data={})
