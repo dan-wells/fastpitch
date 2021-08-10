@@ -365,7 +365,7 @@ def main():
     log = lambda s, d: DLLogger.log(step=s, data=d) if log_enabled else None
 
     for rep in (tqdm.tqdm(range(reps)) if reps > 1 else range(reps)):
-        for b in batches:
+        for n, b in enumerate(batches):
             if generator is None:
                 log(rep, {'Synthesizing from ground truth mels'})
                 mel = b['mel']
@@ -383,7 +383,7 @@ def main():
                 if args.save_mels and args.output is not None and reps == 1:
                     for i, msf in enumerate(mel):
                         msf = msf[:, :mel_lens[i]]
-                        fname = b['mel_output'][i] if 'mel_output' in b else f'mel_{i}.pt'
+                        fname = b['mel_output'][i] if 'mel_output' in b else f'mel_{(n * args.batch_size) + i}.pt'
                         mel_path = Path(args.output, fname)
                         torch.save(msf, mel_path)
 
@@ -412,7 +412,7 @@ def main():
                             audio[-fade_len:] *= fade_w.to(audio.device)
 
                         audio = audio / torch.max(torch.abs(audio))
-                        fname = b['output'][i] if 'output' in b else f'audio_{i}.wav'
+                        fname = b['output'][i] if 'output' in b else f'audio_{(n * args.batch_size) + i}.wav'
                         audio_path = Path(args.output, fname)
                         write(audio_path, args.sampling_rate, audio.cpu().numpy())
 
