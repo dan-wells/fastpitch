@@ -58,6 +58,8 @@ def parse_args(parser):
                         default='./', help='Path to dataset')
     parser.add_argument('--wav-text-filelist', required=True,
                         type=str, help='Path to file with audio paths and text')
+    parser.add_argument('--output-meta-file', default=None, type=str,
+                        help='Write metadata file pointing to extracted features')
     parser.add_argument('--text-cleaners', nargs='*',
                         default=['english_cleaners'], type=str,
                         help='Type of text cleaners for input text')
@@ -262,6 +264,8 @@ def main():
             Path(args.dataset_path, datum).mkdir(parents=False, exist_ok=True)
         if getattr(args, 'extract_durs_from_textgrids'):
             Path(args.dataset_path, 'durations').mkdir(parents=False, exist_ok=True)
+        if getattr(args, 'output_meta_file'):
+            metadata = {}
 
     filenames = [Path(l.split('|')[0]).stem
                  for l in open(args.wav_text_filelist, 'r')]
@@ -332,6 +336,10 @@ def main():
                 durations.append(dur)
                 fpath = Path(args.dataset_path, 'durations', fnames[j] + '.pt')
                 torch.save(dur.cpu().int(), fpath)
+                # TODO: likely always to be using TextGrid alignments, but should
+                # account for texts in other scenarios just in case
+                if args.output_meta_file is not None:
+                    metadata[fnames[j]] = phones
         if args.extract_pitch_mel or args.extract_pitch_char or args.extract_pitch_trichar:
             for j, dur in enumerate(durations):
                 fpath = Path(args.dataset_path, 'pitch_char', fnames[j] + '.pt')
@@ -372,6 +380,9 @@ def main():
                     sil_mask = text != "sil"
                 else:
                     sil_mask = np.ones_like(text, dtype=bool)
+                text = text[sil_mask]
+                if args.output_meta_file is not None:
+                    metadata[fnames[j]] = text
                 mel = mels_padded[j][:, :mel_lens[j]].cpu()
                 mel = mel[:, trim_start:trim_end]
                 dur = durations[j]
@@ -413,6 +424,14 @@ def main():
         for fname, pitch in pitch_vecs['trichar'].items():
             fpath = Path(args.dataset_path, 'pitch_trichar', fname + '.pt')
             torch.save(torch.from_numpy(pitch), fpath)
+
+    # TODO: only handling mels, durations, pitch_char and texts for now
+    if args.output_meta_file is not None:
+        with open(args.output_meta_file, 'w') as meta_out:
+            for fname, text in metadata.items():
+                meta_out.write(
+                    'mels/{0}.pt|durations/{0}.pt|pitch_char/{0}.pt|{1}\n'.format(
+                        fname, ' '.join(text)))
 
     DLLogger.flush()
 
