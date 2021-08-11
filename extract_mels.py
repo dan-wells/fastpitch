@@ -104,8 +104,9 @@ def parse_args(parser):
                         help='Extract pitch averaged over input characters')
     parser.add_argument('--extract-durs-from-textgrids', action='store_true',
                         help='Extract char durations from Praat TextGrids')
-    parser.add_argument('--trim-silence', action='store_true',
-                        help='Trim leading and trailing silences from audio using TextGrids')
+    parser.add_argument('--trim-silence', default=None, type=float,
+                        help='Trim leading and trailing silences from audio using TextGrids. '
+                        'Specify desired silence duration to leave (0 to trim completely)')
     parser.add_argument('--train-mode', action='store_true',
                         help='Run the model in .train() mode')
     parser.add_argument('--cuda', action='store_true',
@@ -335,7 +336,7 @@ def main():
             for j, dur in enumerate(durations):
                 fpath = Path(args.dataset_path, 'pitch_char', fnames[j] + '.pt')
                 wav = Path(args.dataset_path, 'wavs', fnames[j] + '.wav')
-                if args.trim_silence:
+                if args.trim_silence is not None:
                     p_mel, p_char, p_trichar = calculate_pitch(str(wav), dur.cpu().numpy(),
                                                                start_times[j], end_times[j])
                 else:
@@ -343,26 +344,38 @@ def main():
                 pitch_vecs['mel'][fnames[j]] = p_mel
                 pitch_vecs['char'][fnames[j]] = p_char
                 pitch_vecs['trichar'][fnames[j]] = p_trichar
-        if args.trim_silence:
+        if args.trim_silence is not None:
             assert args.extract_durs_from_textgrids, \
                 "Can only trim silences based on TextGrid alignments"
+            keep_sil_frames = args.trim_silence
+            if keep_sil_frames > 0:
+                keep_sil_frames = np.round(keep_sil_frames * args.sampling_rate / args.hop_length)
+            keep_sil_frames = int(keep_sil_frames)
             for j, text in enumerate(texts):
                 text = np.array(text)
                 sil_idx = np.where(text == 'sil')
-                if len(sil_idx[0]) == 2:
+                sil_durs = durations[j][sil_idx]
+                trim_durs = np.array([d - keep_sil_frames if d > keep_sil_frames else 0 for d in sil_durs])
+                if len(trim_durs) == 2:
                     # trim both sides
-                    trim_start, trim_end = durations[j][sil_idx]
+                    trim_start, trim_end = trim_durs
                     trim_end = -trim_end
-                elif sil_idx[0][0] == 0:
+                elif sil_durs[0] == 0:
                     # trim only leading silence
-                    trim_start, trim_end = durations[j][0], None
-                elif sil_idx[0][0] == len(texts) - 1:
+                    trim_start, trim_end = trim_durs[0], None
+                elif sil_durs[0] == len(texts) - 1:
                     # trim only trailing silence
-                    trim_start, trim_end = None, -durations[j][-1]
-                sil_mask = text != "sil"
+                    trim_start, trim_end = None, -trim_durs[0]
+                if trim_end == 0:
+                    trim_end = None
+                if args.trim_silence == 0:
+                    sil_mask = text != "sil"
+                else:
+                    sil_mask = np.ones_like(text, dtype=bool)
                 mel = mels_padded[j][:, :mel_lens[j]].cpu()
                 mel = mel[:, trim_start:trim_end]
                 dur = durations[j]
+                dur = dur.put(torch.tensor(sil_idx), sil_durs - trim_durs)
                 dur = dur[sil_mask]
                 assert mel.shape[1] == sum(dur), \
                     "{}: Trimming led to mismatched durations ({}) and mels ({})".format(
