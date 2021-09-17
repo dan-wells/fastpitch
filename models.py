@@ -54,15 +54,6 @@ def parse_model_args(model_name, parser, add_help=False):
         raise NotImplementedError(model_name)
 
 
-def batchnorm_to_float(module):
-    """Converts batch norm to FP32"""
-    if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
-        module.float()
-    for child in module.children():
-        batchnorm_to_float(child)
-    return module
-
-
 def init_bn(module):
     if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
         if module.affine:
@@ -98,21 +89,21 @@ def get_model(model_name, model_config, device,
         if forward_is_infer:
             if jitable:
                 class FastPitch__forward_is_infer(_FastPitchJIT):
-                    def forward(self, inputs, input_lengths, pace: float = 1.0,
+                    def forward(self, inputs, pace: float = 1.0,
                                 dur_tgt: Optional[torch.Tensor] = None,
                                 pitch_tgt: Optional[torch.Tensor] = None,
                                 speaker: int = 0):
-                        return self.infer(inputs, input_lengths, pace=pace,
+                        return self.infer(inputs, pace=pace,
                                           dur_tgt=dur_tgt, pitch_tgt=pitch_tgt,
                                           speaker=speaker)
             else:
                 class FastPitch__forward_is_infer(_FastPitch):
-                    def forward(self, inputs, input_lengths, pace: float = 1.0,
+                    def forward(self, inputs, pace: float = 1.0,
                                 dur_tgt: Optional[torch.Tensor] = None,
                                 pitch_tgt: Optional[torch.Tensor] = None,
                                 pitch_transform=None,
                                 speaker: Optional[int] = None):
-                        return self.infer(inputs, input_lengths, pace=pace,
+                        return self.infer(inputs, pace=pace,
                                           dur_tgt=dur_tgt, pitch_tgt=pitch_tgt,
                                           pitch_transform=pitch_transform,
                                           speaker=speaker)
@@ -184,7 +175,6 @@ def get_model_config(model_name, args):
         model_config = dict(
             # io
             n_mel_channels=args.n_mel_channels,
-            max_seq_len=args.max_seq_len,
             # symbols
             n_symbols=len(get_symbols(args.symbol_set)),
             padding_idx=get_pad_idx(args.symbol_set),

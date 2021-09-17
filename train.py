@@ -32,6 +32,7 @@ import glob
 import os
 import re
 import time
+import warnings
 from collections import defaultdict, OrderedDict
 from contextlib import contextmanager
 
@@ -41,7 +42,6 @@ import torch.distributed as dist
 from scipy.io.wavfile import write as write_wav
 from torch.autograd import Variable
 from torch.nn.parallel import DistributedDataParallel
-from torch.nn.parameter import Parameter
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
@@ -109,10 +109,10 @@ def parse_args(parser):
                               default=1.0, help='Rescale pitch predictor loss')
 
     dataset = parser.add_argument_group('dataset parameters')
-    dataset.add_argument('--training-files', type=str, required=True,
-                         help='Path to training filelist. Separate multiple paths with commas.')
-    dataset.add_argument('--validation-files', type=str, required=True,
-                         help='Path to validation filelist. Separate multiple paths with commas.')
+    dataset.add_argument('--training-files', type=str, nargs='*', required=True,
+                      help='Paths to training filelists.')
+    dataset.add_argument('--validation-files', type=str, nargs='*',
+                      required=True, help='Paths to validation filelists')
     dataset.add_argument('--pitch-mean-std-file', type=str, default=None,
                          help='Path to pitch stats to be stored in the model')
     dataset.add_argument('--text-cleaners', nargs='*',
@@ -165,7 +165,7 @@ def last_checkpoint(output):
             torch.load(fpath, map_location='cpu')
             return False
         except:
-            print(f'WARNING: Cannot load {fpath}')
+            warnings.warn(f'Cannot load {fpath}')
             return True
 
     saved = sorted(
@@ -229,7 +229,7 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size,
     tik = time.perf_counter()
     with torch.no_grad():
         val_sampler = DistributedSampler(valset) if distributed_run else None
-        val_loader = DataLoader(valset, num_workers=8, shuffle=False,
+        val_loader = DataLoader(valset, num_workers=4, shuffle=False,
                                 sampler=val_sampler,
                                 batch_size=batch_size, pin_memory=False,
                                 collate_fn=collate_fn)
@@ -241,15 +241,15 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size,
             loss, meta = criterion(y_pred, y, is_training=False, meta_agg='sum')
 
             if distributed_run:
-                for k,v in meta.items():
+                for k, v in meta.items():
                     val_meta[k] += reduce_tensor(v, 1)
                 val_num_frames += reduce_tensor(num_frames.data, 1).item()
             else:
-                for k,v in meta.items():
+                for k, v in meta.items():
                     val_meta[k] += v
                 val_num_frames = num_frames.item()
 
-        val_meta = {k: v / len(valset) for k,v in val_meta.items()}
+        val_meta = {k: v / len(valset) for k, v in val_meta.items()}
 
     val_meta['took'] = time.perf_counter() - tik
 
@@ -285,7 +285,7 @@ def apply_ema_decay(model, ema_model, decay):
         return
     st = model.state_dict()
     add_module = hasattr(model, 'module') and not hasattr(ema_model, 'module')
-    for k,v in ema_model.state_dict().items():
+    for k, v in ema_model.state_dict().items():
         if add_module and not k.startswith('module.'):
             k = 'module.' + k
         v.copy_(decay * v + (1 - decay) * st[k])
@@ -399,7 +399,7 @@ def main():
     else:
         train_sampler, shuffle = None, True
 
-    train_loader = DataLoader(trainset, num_workers=8, shuffle=shuffle,
+    train_loader = DataLoader(trainset, num_workers=4, shuffle=shuffle,
                               sampler=train_sampler, batch_size=args.batch_size,
                               pin_memory=False, drop_last=True,
                               collate_fn=collate_fn)
@@ -463,7 +463,7 @@ def main():
             if distributed_run:
                 reduced_loss = reduce_tensor(loss.data, args.world_size).item()
                 reduced_num_frames = reduce_tensor(num_frames.data, 1).item()
-                meta = {k: reduce_tensor(v, args.world_size) for k,v in meta.items()}
+                meta = {k: reduce_tensor(v, args.world_size) for k, v in meta.items()}
             else:
                 reduced_loss = loss.item()
                 reduced_num_frames = num_frames.item()

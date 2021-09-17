@@ -28,10 +28,10 @@
 import argparse
 import models
 import time
-import tqdm
 import sys
 import warnings
 from pathlib import Path
+from tqdm import tqdm
 
 import torch
 import numpy as np
@@ -84,8 +84,8 @@ def parse_args(parser):
     parser.add_argument('--amp', action='store_true',
                         help='Inference with AMP')
     parser.add_argument('-bs', '--batch-size', type=int, default=64)
-    parser.add_argument('--include-warmup', action='store_true',
-                        help='Include warmup')
+    parser.add_argument('--warmup-steps', type=int, default=0,
+                        help='Warmup iterations before measuring performance')
     parser.add_argument('--repeats', type=int, default=1,
                         help='Repeat inference for benchmarking')
     parser.add_argument('--torchscript', action='store_true',
@@ -173,7 +173,11 @@ def load_and_setup_model(model_name, parser, checkpoint, amp, device,
         model = load_model_from_ckpt(checkpoint, ema, model)
 
     if model_name == "WaveGlow":
+        for k, m in model.named_modules():
+            m._non_persistent_buffers_set = set()  # pytorch 1.6.0 compatability
+
         model = model.remove_weightnorm(model)
+
     if amp:
         model.half()
     model.eval()
@@ -263,17 +267,23 @@ def build_pitch_transformation(args):
 
 
 class MeasureTime(list):
+    def __init__(self, *args, cuda=True, **kwargs):
+        super(MeasureTime, self).__init__(*args, **kwargs)
+        self.cuda = cuda
+
     def __enter__(self):
-        torch.cuda.synchronize()
+        if self.cuda:
+            torch.cuda.synchronize()
         self.t0 = time.perf_counter()
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
-        torch.cuda.synchronize()
+        if self.cuda:
+            torch.cuda.synchronize()
         self.append(time.perf_counter() - self.t0)
 
     def __add__(self, other):
         assert len(self) == len(other)
-        return MeasureTime(sum(ab) for ab in zip(self, other))
+        return MeasureTime((sum(ab) for ab in zip(self, other)), cuda=cuda)
 
 
 def main():
@@ -332,19 +342,18 @@ def main():
         args.input_type, args.phone_set,
         args.batch_size, args.dataset_path, load_mels=(generator is None))
 
-    if args.include_warmup:
-        # Use real data rather than synthetic - FastPitch predicts len
-        for i in range(3):
-            with torch.no_grad():
-                if generator is not None:
-                    b = batches[0]
-                    mel, *_ = generator(b['text'])
-                if waveglow is not None:
-                    audios = waveglow(mel, sigma=args.sigma_infer).float()
-                    _ = denoiser(audios, strength=args.denoising_strength)
+    # Use real data rather than synthetic - FastPitch predicts len
+    for _ in tqdm(range(args.warmup_steps), 'Warmup'):
+        with torch.no_grad():
+            if generator is not None:
+                b = batches[0]
+                mel, *_ = generator(b['text'])
+            if waveglow is not None:
+                audios = waveglow(mel, sigma=args.sigma_infer).float()
+                _ = denoiser(audios, strength=args.denoising_strength)
 
-    gen_measures = MeasureTime()
-    waveglow_measures = MeasureTime()
+    gen_measures = MeasureTime(cuda=args.cuda)
+    waveglow_measures = MeasureTime(cuda=args.cuda)
 
     gen_kw = {'pace': args.pace,
               'speaker': args.speaker,
@@ -364,15 +373,14 @@ def main():
     log_enabled = reps == 1
     log = lambda s, d: DLLogger.log(step=s, data=d) if log_enabled else None
 
-    for rep in (tqdm.tqdm(range(reps)) if reps > 1 else range(reps)):
+    for rep in (tqdm(range(reps), 'Inference') if reps > 1 else range(reps)):
         for n, b in enumerate(batches):
             if generator is None:
                 log(rep, {'Synthesizing from ground truth mels'})
-                mel = b['mel']
+                mel, mel_lens = b['mel'], b['mel_lens']
             else:
                 with torch.no_grad(), gen_measures:
-                    mel, mel_lens, dur_pred, pitch_pred = generator(
-                        b['text'], b['text_lens'], **gen_kw)
+                    mel, mel_lens, *_ = generator(b['text'], **gen_kw)
 
                 gen_infer_perf = mel.size(0) * mel.size(2) / gen_measures[-1]
                 all_letters += b['text_lens'].sum().item()
@@ -381,11 +389,11 @@ def main():
                 log(rep, {"fastpitch_latency": gen_measures[-1]})
 
                 if args.save_mels and args.output is not None and reps == 1:
-                    for i, msf in enumerate(mel):
-                        msf = msf[:, :mel_lens[i]]
+                    for i, _mel in enumerate(mel):
+                        _mel = _mel[:, :mel_lens[i]]
                         fname = b['mel_output'][i] if 'mel_output' in b else f'mel_{(n * args.batch_size) + i}.pt'
                         mel_path = Path(args.output, fname)
-                        torch.save(msf, mel_path)
+                        torch.save(_mel, mel_path)
 
             if waveglow is not None:
                 with torch.no_grad(), waveglow_measures:

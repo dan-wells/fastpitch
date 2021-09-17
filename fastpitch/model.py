@@ -26,8 +26,7 @@
 # *****************************************************************************
 
 import torch
-from torch import nn as nn
-from torch.nn.utils.rnn import pad_sequence
+import torch.nn as nn
 import torch.nn.functional as F
 
 from common.layers import ConvReLUNorm
@@ -52,7 +51,7 @@ def regulate_len(durations, enc_out, pace=1.0, mel_max_len=None):
     mult = mult.to(dtype)
     enc_rep = torch.matmul(mult, enc_out)
 
-    if mel_max_len:
+    if mel_max_len is not None:
         enc_rep = enc_rep[:, :mel_max_len]
         dec_lens = torch.clamp_max(dec_lens, mel_max_len)
     return enc_rep, dec_lens
@@ -80,7 +79,7 @@ class TemporalPredictor(nn.Module):
 
 
 class FastPitch(nn.Module):
-    def __init__(self, n_mel_channels, max_seq_len, n_symbols, padding_idx,
+    def __init__(self, n_mel_channels, n_symbols, padding_idx,
                  symbols_embedding_dim, in_fft_n_layers, in_fft_n_heads,
                  in_fft_d_head,
                  in_fft_conv1d_kernel_size, in_fft_conv1d_filter_size,
@@ -96,7 +95,6 @@ class FastPitch(nn.Module):
                  p_pitch_predictor_dropout, pitch_predictor_n_layers,
                  pitch_embedding_kernel_size, n_speakers, speaker_emb_weight):
         super(FastPitch, self).__init__()
-        del max_seq_len  # unused
 
         self.encoder = FFTransformer(
             n_layer=in_fft_n_layers, n_head=in_fft_n_heads,
@@ -171,11 +169,9 @@ class FastPitch(nn.Module):
         # Input FFT
         enc_out, enc_mask = self.encoder(inputs, conditioning=spk_emb)
 
-        # Embedded for predictors
-        pred_enc_out, pred_enc_mask = enc_out, enc_mask
 
         # Predict durations
-        log_dur_pred = self.duration_predictor(pred_enc_out, pred_enc_mask)
+        log_dur_pred = self.duration_predictor(enc_out, enc_mask)
         dur_pred = torch.clamp(torch.exp(log_dur_pred) - 1, 0, max_duration)
 
         # Predict pitch
@@ -196,9 +192,8 @@ class FastPitch(nn.Module):
         mel_out = self.proj(dec_out)
         return mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred
 
-    def infer(self, inputs, input_lens, pace=1.0, dur_tgt=None, pitch_tgt=None,
+    def infer(self, inputs, pace=1.0, dur_tgt=None, pitch_tgt=None,
               pitch_transform=None, max_duration=75, speaker=0):
-        del input_lens  # unused
 
         if self.speaker_emb is None:
             spk_emb = 0
@@ -210,11 +205,8 @@ class FastPitch(nn.Module):
         # Input FFT
         enc_out, enc_mask = self.encoder(inputs, conditioning=spk_emb)
 
-        # Embedded for predictors
-        pred_enc_out, pred_enc_mask = enc_out, enc_mask
-
         # Predict durations
-        log_dur_pred = self.duration_predictor(pred_enc_out, pred_enc_mask)
+        log_dur_pred = self.duration_predictor(enc_out, enc_mask)
         dur_pred = torch.clamp(torch.exp(log_dur_pred) - 1, 0, max_duration)
 
         # Pitch over chars
