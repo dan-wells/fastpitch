@@ -3,7 +3,6 @@ import re
 import numpy as np
 from . import cleaners
 from . import cmudict
-from .combilex import combilex_phones
 from .numerical import _currency_re, _expand_currency
 from .symbols import get_symbols
 
@@ -23,20 +22,19 @@ _arpa_re = re.compile(r'{[^}]+}|\S+')
 
 
 class PhoneProcessing(object):
-    def __init__(self, phone_set=None):
-        _pad = ["<pad>"]
-        self.sil_phones = ['sil', 'sp', 'spn']
-
+    def __init__(self, symbol_set=None):
         # TODO: default phone set should use PanPhon IPA
-        if phone_set is None:
+        if symbol_set is None:
             raise NotImplementedError( "Please specify an explicit phone set")
-        if phone_set == 'combilex':
-            self.symbols = _pad + self.sil_phones + combilex_phones
+        if symbol_set == 'combilex':
+            self.symbols = get_symbols('combilex')
 
         self.symbol_to_id = {s: i for i, s in enumerate(self.symbols)}
         self.id_to_symbol = {i: s for i, s in enumerate(self.symbols)}
 
     def encode_text(self, text):
+        # TODO: assumes space-delimited phone strings. For panphon, should
+        # take whole words encoded as phones
         return [self.symbol_to_id[s] for s in text.split(' ')]
 
 

@@ -32,6 +32,16 @@ def get_symbols(symbol_set='english_basic'):
         _accented = 'áçéêëñöøćž'
         _letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
         symbols = list(_pad + _punctuation + _math + _special + _accented + _letters) + _arpabet
+    elif symbol_set == 'combilex':
+        _pad = ['_']
+        _silence = ['sil', 'sp']
+        _oov = ['spn']
+        _phones = [
+            '3', '5', '@', 'A', 'D', 'E', 'I', 'N', 'O', 'S', 'T', 'U', 'V', 'Z',
+            'a', 'b', 'd', 'dZ', 'e', 'e~', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'l=',
+            'm', 'm=', 'n', 'n=', 'o~', 'p', 'r', 's', 't', 'tS', 'u', 'v', 'w', 'z'
+        ]
+        symbols = list(_pad + _silence + _oov + _phones)
     else:
         raise Exception("{} symbol set does not exist".format(symbol_set))
 
@@ -39,7 +49,7 @@ def get_symbols(symbol_set='english_basic'):
 
 
 def get_pad_idx(symbol_set='english_basic'):
-    if symbol_set in {'english_basic', 'english_basic_lowercase'}:
-        return 0
-    else:
+    try:
+        return get_symbols(symbol_set).index('_')
+    except ValueError:
         raise Exception("{} symbol set not used yet".format(symbol_set))

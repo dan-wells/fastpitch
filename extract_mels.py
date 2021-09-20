@@ -68,9 +68,6 @@ def parse_args(parser):
     parser.add_argument('--input-type', type=str, default='char',
                          choices=['char', 'phone'],
                          help='Input symbols used, either char (text) or phone symbols.')
-    # TODO: integrate this with --symbol-set
-    parser.add_argument('--phone-set', default=None,
-                         help='Phone set if using phone input symbols')
     parser.add_argument('--max-wav-value', default=32768.0, type=float,
                         help='Maximum audiowave value')
     parser.add_argument('--peak-norm', action='store_true',
@@ -123,7 +120,7 @@ class FilenamedLoader(TextMelLoader):
         kwargs['load_mel_from_disk'] = False
         super(FilenamedLoader, self).__init__(**kwargs)
         if kwargs['input_type'] == 'phone':
-            self.tp = PhoneProcessing(kwargs['phone_set'])
+            self.tp = PhoneProcessing(kwargs['symbol_set'])
         else:
             self.tp = TextProcessing(kwargs['symbol_set'], kwargs['text_cleaners'])
         self.filenames = filenames

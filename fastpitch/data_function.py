@@ -40,7 +40,7 @@ class TextMelAliLoader(TextMelLoader):
     def __init__(self, **kwargs):
         super(TextMelAliLoader, self).__init__(**kwargs)
         if kwargs['input_type'] == 'phone':
-            self.tp = PhoneProcessing(kwargs['phone_set'])
+            self.tp = PhoneProcessing(kwargs['symbol_set'])
         else:
             self.tp = TextProcessing(kwargs['symbol_set'], kwargs['text_cleaners'])
         self.n_speakers = kwargs['n_speakers']

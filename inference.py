@@ -122,9 +122,6 @@ def parse_args(parser):
     text_processing.add_argument('--input-type', type=str, default='char',
                                  choices=['char', 'phone'],
                                  help='Input symbols used, either char (text) or phone symbols.')
-    # TODO: integrate this with --symbol-set
-    text_processing.add_argument('--phone-set', default=None,
-                                 help='Phone set if using phone input symbols')
 
     cond = parser.add_argument_group('conditioning on additional attributes')
     cond.add_argument('--n-speakers', type=int, default=1,
@@ -195,14 +192,13 @@ def load_fields(fpath):
     return {c:f for c, f in zip(columns, fields)}
 
 
-def prepare_input_sequence(fields, device, symbol_set, text_cleaners,
-                           input_type, phone_set,
+def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners,
                            batch_size=128, dataset=None, load_mels=False,
                            load_pitch=False):
     if input_type == 'char':
         tp = TextProcessing(symbol_set, text_cleaners)
     else:
-        tp = PhoneProcessing(phone_set)
+        tp = PhoneProcessing(symbol_set)
 
     fields['text'] = [torch.LongTensor(tp.encode_text(text))
                       for text in fields['text']]
@@ -338,8 +334,7 @@ def main():
 
     fields = load_fields(args.input)
     batches = prepare_input_sequence(
-        fields, device, args.symbol_set, args.text_cleaners,
-        args.input_type, args.phone_set,
+        fields, device, args.input_type, args.symbol_set, args.text_cleaners,
         args.batch_size, args.dataset_path, load_mels=(generator is None))
 
     # Use real data rather than synthetic - FastPitch predicts len
