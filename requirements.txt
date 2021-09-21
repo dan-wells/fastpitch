@@ -4,6 +4,7 @@ inflect
 librosa==0.8.0
 matplotlib
 numpy
+panphon
 praat-parselmouth==0.3.3
 scipy
 tensorboardX==2.0

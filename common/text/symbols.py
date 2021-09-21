@@ -3,7 +3,14 @@
 '''
 Defines the set of symbols used in text input to the model.
 
-The default is a set of ASCII characters that works well for English or text that has been run through Unidecode. For other data, you can modify _characters. See TRAINING_DATA.md for details. '''
+The default is a set of ASCII characters that works well for English or text
+that has been run through Unidecode. For other data, you can modify
+_characters. See TRAINING_DATA.md for details.
+'''
+
+from panphon import FeatureTable
+from panphon.permissive import PermissiveFeatureTable
+
 from .cmudict import valid_symbols
 
 
@@ -32,6 +39,34 @@ def get_symbols(symbol_set='english_basic'):
         _accented = 'áçéêëñöøćž'
         _letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
         symbols = list(_pad + _punctuation + _math + _special + _accented + _letters) + _arpabet
+    elif symbol_set == 'ipa':
+        ft = PermissiveFeatureTable()
+        _pad = ['_']
+        _silence = ['sil', 'sp']
+        _oov = ['spn']
+        _phones = list(ft.bases.keys()) # 147 symbols, only base phones
+        symbols = _pad + _silence + _oov + _phones
+    elif symbol_set == 'ipa_all':
+        ft = FeatureTable()
+        _pad = ['_']
+        _silence = ['sil', 'sp']
+        _oov = ['spn']
+        _phones = list(ft.seg_dict.keys()) # 6367 symbols (!) includes all diacritics
+        symbols = _pad + _silence + _oov + _phones
+    elif symbol_set == 'xsampa':
+        ft = FeatureTable()
+        xs = ft.xsampa
+        _pad = ['_']
+        _silence = ['sil', 'sp']
+        _oov = ['spn']
+        # TODO: some of these are only diacritics, doesn't make sense to have
+        # entries in phone embedding table (and we shouldn't expect to see
+        # them on their own in e.g. space-separated input files). To start,
+        # let's assume X-SAMPA input only uses base symbols. In future, might
+        # want to pass through IPA using xs.convert(), but then would need to
+        # use the 'ipa_all' FeatureTable)
+        _phones = list(xs.xs2ipa.keys()) # 169 symbols
+        symbols = _pad + _silence + _oov + _phones
     elif symbol_set == 'combilex':
         _pad = ['_']
         _silence = ['sil', 'sp']
@@ -41,7 +76,7 @@ def get_symbols(symbol_set='english_basic'):
             'a', 'b', 'd', 'dZ', 'e', 'e~', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'l=',
             'm', 'm=', 'n', 'n=', 'o~', 'p', 'r', 's', 't', 'tS', 'u', 'v', 'w', 'z'
         ]
-        symbols = list(_pad + _silence + _oov + _phones)
+        symbols = _pad + _silence + _oov + _phones
     else:
         raise Exception("{} symbol set does not exist".format(symbol_set))
 

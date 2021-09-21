@@ -1,6 +1,7 @@
 """ adapted from https://github.com/keithito/tacotron """
 import re
 import numpy as np
+import panphon
 from . import cleaners
 from . import cmudict
 from .numerical import _currency_re, _expand_currency
@@ -22,20 +23,40 @@ _arpa_re = re.compile(r'{[^}]+}|\S+')
 
 
 class PhoneProcessing(object):
-    def __init__(self, symbol_set=None):
-        # TODO: default phone set should use PanPhon IPA
-        if symbol_set is None:
-            raise NotImplementedError( "Please specify an explicit phone set")
-        if symbol_set == 'combilex':
-            self.symbols = get_symbols('combilex')
+    def __init__(self, symbol_set, phon_feats=False):
+        self.symbol_set = symbol_set
+        self.symbols = get_symbols(self.symbol_set)
 
-        self.symbol_to_id = {s: i for i, s in enumerate(self.symbols)}
-        self.id_to_symbol = {i: s for i, s in enumerate(self.symbols)}
+        self.phon_feats = phon_feats
+        if not self.phon_feats:
+            self.symbol_to_id = {s: i for i, s in enumerate(self.symbols)}
+            self.id_to_symbol = {i: s for i, s in enumerate(self.symbols)}
+
+        # Used if symbol_set == 'ipa' or to convert to phonological features
+        self.ft = panphon.FeatureTable()
+        self.mfa_symbols = ['sil', 'sp', 'spn']
+
 
     def encode_text(self, text):
-        # TODO: assumes space-delimited phone strings. For panphon, should
-        # take whole words encoded as phones
-        return [self.symbol_to_id[s] for s in text.split(' ')]
+        if self.phon_feats:
+            raise NotImplementedError("Encoding phonological features not yet supported.")
+
+        if self.symbol_set in ['xsampa', 'combilex']:
+            # Assuming space-delimited phone strings, e.g. 'sp D @ k { t sp'
+            return [self.symbol_to_id[s] for s in text.split(' ')]
+        # TODO: could also handle X-SAMPA this way if mapping through IPA
+        # using panphon
+        elif self.symbol_set.startswith('ipa'):
+            # Text can be either space-delimited phone strings or phonetized
+            # words, e.g. 'sp ðə kæt sp'
+            symbol_ids = []
+            for word in text.split(' '):
+                if word in self.mfa_symbols:
+                    symbol_ids.append(self.symbol_to_id[word])
+                else:
+                    for s in self.ft.ipa_segs(word):
+                        symbol_ids.append(self.symbol_to_id[s])
+            return symbol_ids
 
 
 class TextProcessing(object):
