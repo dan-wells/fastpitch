@@ -39,6 +39,8 @@ def parse_fastpitch_args(parent, add_help=False):
                     help='Number of bins in mel-spectrograms')
 
     symbols = parser.add_argument_group('symbols parameters')
+    symbols.add_argument('--symbol-type', default='char', type=str,
+                         help='Input symbol type')
     symbols.add_argument('--n-symbols', default=148, type=int,
                          help='Number of symbols in dictionary')
     symbols.add_argument('--padding-idx', default=0, type=int,

@@ -8,10 +8,6 @@ from .numerical import _currency_re, _expand_currency
 from .symbols import get_symbols
 
 
-#########
-# REGEX #
-#########
-
 # Regular expression matching text enclosed in curly braces for encoding
 _curly_re = re.compile(r'(.*?)\{(.+?)\}(.*)')
 
@@ -21,42 +17,66 @@ _words_re = re.compile(r"([a-zA-ZÀ-ž]+['][a-zA-ZÀ-ž]{1,2}|[a-zA-ZÀ-ž]+)|([
 # Regular expression separating words enclosed in curly braces for cleaning
 _arpa_re = re.compile(r'{[^}]+}|\S+')
 
+# Mapping from Combilex phones to IPA
+_combilex_to_ipa = {
+    '3': 'ɜ', '5': 'ɫ', '@': 'ə', 'A': 'ɑ', 'D': 'ð', 'E': 'ɛ', 'I': 'ɪ',
+    'N': 'ŋ', 'O': 'ɔ', 'S': 'ʃ', 'T': 'θ', 'U': 'ʊ', 'V': 'ʌ', 'Z': 'ʒ',
+    'a': 'a', 'b': 'b', 'd': 'd', 'dZ': 'd͡ʒ', 'e': 'e', 'e~': 'ẽ', 'f': 'f',
+    'g': 'ɡ', 'h': 'h', 'i': 'i', 'j': 'j', 'k': 'k', 'l': 'l', 'l=': 'l̩',
+    'm': 'm', 'm=': 'm̩', 'n': 'n', 'n=': 'n̩', 'o': 'o', 'o~': 'õ', 'p': 'p',
+    'r': 'ɹ', 's': 's', 't': 't', 'tS': 't͡ʃ', 'u': 'u', 'v': 'v', 'w': 'w',
+    'z': 'z'
+}
 
 class PhoneProcessing(object):
-    def __init__(self, symbol_set, phon_feats=False):
+    def __init__(self, symbol_set, symbol_type='phone'):
         self.symbol_set = symbol_set
-        self.symbols = get_symbols(self.symbol_set)
+        self.symbol_type = symbol_type
+        self.symbols = get_symbols(symbol_set, symbol_type)
 
-        self.phon_feats = phon_feats
-        if not self.phon_feats:
+        if symbol_type == 'phone':
             self.symbol_to_id = {s: i for i, s in enumerate(self.symbols)}
             self.id_to_symbol = {i: s for i, s in enumerate(self.symbols)}
 
         # Used if symbol_set == 'ipa' or to convert to phonological features
         self.ft = panphon.FeatureTable()
-        self.mfa_symbols = ['sil', 'sp', 'spn']
+        self.sil_symbols = ['sp', 'spn', 'sil']
+        self.sil_pf_vec = [1 if i == 'sil' else 0 for i in self.symbols]
 
 
     def encode_text(self, text):
-        if self.phon_feats:
-            raise NotImplementedError("Encoding phonological features not yet supported.")
-
-        if self.symbol_set in ['xsampa', 'combilex']:
-            # Assuming space-delimited phone strings, e.g. 'sp D @ k { t sp'
-            return [self.symbol_to_id[s] for s in text.split(' ')]
-        # TODO: could also handle X-SAMPA this way if mapping through IPA
-        # using panphon
-        elif self.symbol_set.startswith('ipa'):
-            # Text can be either space-delimited phone strings or phonetized
-            # words, e.g. 'sp ðə kæt sp'
-            symbol_ids = []
-            for word in text.split(' '):
-                if word in self.mfa_symbols:
-                    symbol_ids.append(self.symbol_to_id[word])
+        if self.symbol_type == 'pf':
+            feats = []
+            for s in text.split(' '):
+                if s in self.sil_symbols:
+                    feats.append(self.sil_pf_vec)
+                elif self.symbol_set == 'combilex':
+                    pf_vec = self.ft.fts(_combilex_to_ipa[s]).numeric()
+                    pf_vec += [0] # add unspecified silence feature
+                    feats.append(pf_vec)
                 else:
-                    for s in self.ft.ipa_segs(word):
-                        symbol_ids.append(self.symbol_to_id[s])
-            return symbol_ids
+                    pf_vecs = self.ft.word_to_vector_list(
+                        s, numeric=True, xsampa=self.symbol_set=='xsampa')
+                    pf_vecs = [i + [0] for i in pf_vecs]
+                    feats.extend(pf_vecs)
+            return feats
+        else:
+            if self.symbol_set in ['xsampa', 'combilex']:
+                # Assuming space-delimited phone strings, e.g. 'sp D @ k { t sp'
+                return [self.symbol_to_id[s] for s in text.split(' ')]
+            # TODO: could also handle X-SAMPA this way if mapping through IPA
+            # using panphon
+            elif self.symbol_set.startswith('ipa'):
+                # Text can be either space-delimited phone strings or phonetized
+                # words, e.g. 'sp ðə kæt sp'
+                symbol_ids = []
+                for word in text.split(' '):
+                    if word in self.sil_symbols:
+                        symbol_ids.append(self.symbol_to_id[word])
+                    else:
+                        for s in self.ft.ipa_segs(word):
+                            symbol_ids.append(self.symbol_to_id[s])
+                return symbol_ids
 
 
 class TextProcessing(object):

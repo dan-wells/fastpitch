@@ -79,9 +79,9 @@ class TemporalPredictor(nn.Module):
 
 
 class FastPitch(nn.Module):
-    def __init__(self, n_mel_channels, n_symbols, padding_idx,
-                 symbols_embedding_dim, in_fft_n_layers, in_fft_n_heads,
-                 in_fft_d_head,
+    def __init__(self, n_mel_channels, symbol_type, n_symbols, padding_idx,
+                 symbols_embedding_dim,
+                 in_fft_n_layers, in_fft_n_heads, in_fft_d_head,
                  in_fft_conv1d_kernel_size, in_fft_conv1d_filter_size,
                  in_fft_output_size,
                  p_in_fft_dropout, p_in_fft_dropatt, p_in_fft_dropemb,
@@ -93,7 +93,8 @@ class FastPitch(nn.Module):
                  p_dur_predictor_dropout, dur_predictor_n_layers,
                  pitch_predictor_kernel_size, pitch_predictor_filter_size,
                  p_pitch_predictor_dropout, pitch_predictor_n_layers,
-                 pitch_embedding_kernel_size, n_speakers, speaker_emb_weight):
+                 pitch_embedding_kernel_size,
+                 n_speakers, speaker_emb_weight):
         super(FastPitch, self).__init__()
 
         self.encoder = FFTransformer(
@@ -108,7 +109,8 @@ class FastPitch(nn.Module):
             embed_input=True,
             d_embed=symbols_embedding_dim,
             n_embed=n_symbols,
-            padding_idx=padding_idx)
+            padding_idx=padding_idx,
+            input_type=symbol_type)
 
         if n_speakers > 1:
             self.speaker_emb = nn.Embedding(n_speakers, symbols_embedding_dim)

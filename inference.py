@@ -120,8 +120,9 @@ def parse_args(parser):
     text_processing.add_argument('--symbol-set', type=str, default='english_basic',
                                  help='Define symbol set for input text')
     text_processing.add_argument('--input-type', type=str, default='char',
-                                 choices=['char', 'phone'],
-                                 help='Input symbols used, either char (text) or phone symbols.')
+                                 choices=['char', 'phone', 'pf'],
+                                 help='Input symbols used, either char (text), phone or '
+                                 'pf (phonological feature vectors).')
 
     cond = parser.add_argument_group('conditioning on additional attributes')
     cond.add_argument('--n-speakers', type=int, default=1,
@@ -198,10 +199,14 @@ def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners
     if input_type == 'char':
         tp = TextProcessing(symbol_set, text_cleaners)
     else:
-        tp = PhoneProcessing(symbol_set)
+        tp = PhoneProcessing(symbol_set, input_type)
 
-    fields['text'] = [torch.LongTensor(tp.encode_text(text))
-                      for text in fields['text']]
+    if input_type == 'pf':
+        fields['text'] = [torch.FloatTensor(tp.encode_text(text))
+                          for text in fields['text']]
+    else:
+        fields['text'] = [torch.LongTensor(tp.encode_text(text))
+                          for text in fields['text']]
     order = np.argsort([-t.size(0) for t in fields['text']])
 
     fields['text'] = [fields['text'][i] for i in order]

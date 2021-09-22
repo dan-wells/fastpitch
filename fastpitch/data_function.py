@@ -39,10 +39,11 @@ class TextMelAliLoader(TextMelLoader):
     """
     def __init__(self, **kwargs):
         super(TextMelAliLoader, self).__init__(**kwargs)
-        if kwargs['input_type'] == 'phone':
-            self.tp = PhoneProcessing(kwargs['symbol_set'])
-        else:
+        if kwargs['input_type'] == 'char':
             self.tp = TextProcessing(kwargs['symbol_set'], kwargs['text_cleaners'])
+        else:
+            self.tp = PhoneProcessing(kwargs['symbol_set'], kwargs['input_type'])
+        self.n_symbols = len(self.tp.symbols)
         self.n_speakers = kwargs['n_speakers']
         if len(self.audiopaths_and_text[0]) != 4 + (kwargs['n_speakers'] > 1):
             raise ValueError('Expected four columns in audiopaths file for single speaker model. \n'
@@ -68,7 +69,9 @@ class TextMelAliLoader(TextMelLoader):
 class TextMelAliCollate():
     """ Zero-pads model inputs and targets based on number of frames per setep
     """
-    def __init__(self):
+    def __init__(self, symbol_type='char', n_symbols=148, n_frames_per_step=1):
+        self.symbol_type = symbol_type
+        self.n_symbols = n_symbols
         self.n_frames_per_step = 1  # Taco2 bckwd compat
 
     def __call__(self, batch):
@@ -83,13 +86,16 @@ class TextMelAliCollate():
             dim=0, descending=True)
         max_input_len = input_lengths[0]
 
-        text_padded = torch.LongTensor(len(batch), max_input_len)
+        if self.symbol_type == 'pf':
+            text_padded = torch.FloatTensor(len(batch), max_input_len, self.n_symbols)
+        else:
+            text_padded = torch.LongTensor(len(batch), max_input_len)
         text_padded.zero_()
         for i in range(len(ids_sorted_decreasing)):
             text = batch[ids_sorted_decreasing[i]][0]
             text_padded[i, :text.size(0)] = text
 
-        dur_padded = torch.zeros_like(text_padded, dtype=batch[0][3].dtype)
+        dur_padded = torch.zeros(len(batch), max_input_len, dtype=batch[0][3].dtype)
         dur_lens = torch.zeros(dur_padded.size(0), dtype=torch.int32)
         for i in range(len(ids_sorted_decreasing)):
             dur = batch[ids_sorted_decreasing[i]][3]
@@ -135,10 +141,13 @@ class TextMelAliCollate():
                 len_x, dur_padded, dur_lens, pitch_padded, speaker)
 
 
-def batch_to_gpu(batch):
+def batch_to_gpu(batch, symbol_type='char'):
     text_padded, input_lengths, mel_padded, output_lengths, \
         len_x, dur_padded, dur_lens, pitch_padded, speaker = batch
-    text_padded = to_gpu(text_padded).long()
+    if symbol_type == 'pf':
+        text_padded = to_gpu(text_padded).float()
+    else:
+        text_padded = to_gpu(text_padded).long()
     input_lengths = to_gpu(input_lengths).long()
     mel_padded = to_gpu(mel_padded).float()
     output_lengths = to_gpu(output_lengths).long()

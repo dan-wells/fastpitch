@@ -58,9 +58,9 @@ def regulate_len(durations, enc_out, pace=1.0, mel_max_len=0):
 
 
 class FastPitch(nn.Module):
-    def __init__(self, n_mel_channels, n_symbols, padding_idx,
-                 symbols_embedding_dim, in_fft_n_layers, in_fft_n_heads,
-                 in_fft_d_head,
+    def __init__(self, n_mel_channels, symbol_type, n_symbols, padding_idx,
+                 symbols_embedding_dim,
+                 in_fft_n_layers, in_fft_n_heads, in_fft_d_head,
                  in_fft_conv1d_kernel_size, in_fft_conv1d_filter_size,
                  in_fft_output_size,
                  p_in_fft_dropout, p_in_fft_dropatt, p_in_fft_dropemb,
@@ -87,7 +87,8 @@ class FastPitch(nn.Module):
             embed_input=True,
             d_embed=symbols_embedding_dim,
             n_embed=n_symbols,
-            padding_idx=padding_idx)
+            padding_idx=padding_idx,
+            input_type=symbol_type)
 
         if n_speakers > 1:
             self.speaker_emb = nn.Embedding(n_speakers, symbols_embedding_dim)

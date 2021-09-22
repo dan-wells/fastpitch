@@ -176,7 +176,8 @@ def get_model_config(model_name, args):
             # io
             n_mel_channels=args.n_mel_channels,
             # symbols
-            n_symbols=len(get_symbols(args.symbol_set)),
+            symbol_type=args.input_type,
+            n_symbols=len(get_symbols(args.symbol_set, args.input_type)),
             padding_idx=get_pad_idx(args.symbol_set),
             symbols_embedding_dim=args.symbols_embedding_dim,
             # input FFT

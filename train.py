@@ -121,8 +121,9 @@ def parse_args(parser):
     dataset.add_argument('--symbol-set', type=str, default='english_basic',
                          help='Define symbol set for input text')
     dataset.add_argument('--input-type', type=str, default='char',
-                         choices=['char', 'phone'],
-                         help='Input symbols used, either char (text) or phone symbols.')
+                         choices=['char', 'phone', 'pf'],
+                         help='Input symbols used, either char (text), phone or '
+                         'pf (phonological feature vectors)')
 
     cond = parser.add_argument_group('conditioning on additional attributes')
     cond.add_argument('--n-speakers', type=int, default=1,
@@ -233,7 +234,7 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size,
         val_meta = defaultdict(float)
         val_num_frames = 0
         for i, batch in enumerate(val_loader):
-            x, y, num_frames = batch_to_gpu(batch)
+            x, y, num_frames = batch_to_gpu(batch, collate_fn.symbol_type)
             y_pred = model(x, use_gt_durations=use_gt_durations)
             loss, meta = criterion(y_pred, y, is_training=False, meta_agg='sum')
 
@@ -384,13 +385,15 @@ def main():
         dur_predictor_loss_scale=args.dur_predictor_loss_scale,
         pitch_predictor_loss_scale=args.pitch_predictor_loss_scale)
 
-    collate_fn = data_functions.get_collate_function('FastPitch')
     trainset = data_functions.get_data_loader('FastPitch',
                                               audiopaths_and_text=args.training_files,
                                               **vars(args))
     valset = data_functions.get_data_loader('FastPitch',
                                             audiopaths_and_text=args.validation_files,
                                             **vars(args))
+    collate_fn = data_functions.get_collate_function('FastPitch',
+                                                     symbol_type=args.input_type,
+                                                     n_symbols=trainset.n_symbols)
     if distributed_run:
         train_sampler, shuffle = DistributedSampler(trainset), False
     else:
@@ -443,7 +446,7 @@ def main():
 
                 model.zero_grad()
 
-            x, y, num_frames = batch_to_gpu(batch)
+            x, y, num_frames = batch_to_gpu(batch, args.input_type)
             y_pred = model(x, use_gt_durations=True)
             loss, meta = criterion(y_pred, y)
 

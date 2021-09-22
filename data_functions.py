@@ -35,15 +35,15 @@ from waveglow.data_function import batch_to_gpu as batch_to_gpu_waveglow
 from waveglow.data_function import MelAudioLoader
 
 
-def get_collate_function(model_name):
+def get_collate_function(model_name, **kwargs):
     return {'Tacotron2': lambda _: TextMelCollate(n_frames_per_step=1),
             'WaveGlow': lambda _: torch.utils.data.dataloader.default_collate,
-            'FastPitch': TextMelAliCollate}[model_name]()
+            'FastPitch': TextMelAliCollate}[model_name](**kwargs)
 
-def get_data_loader(model_name, **args):
+def get_data_loader(model_name, **kwargs):
     return {'Tacotron2': TextMelLoader,
             'WaveGlow': MelAudioLoader,
-            'FastPitch': TextMelAliLoader}[model_name](**args)
+            'FastPitch': TextMelAliLoader}[model_name](**kwargs)
 
 def get_batch_to_gpu(model_name):
     return {'Tacotron2': batch_to_gpu_tacotron2,
