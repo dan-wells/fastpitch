@@ -255,10 +255,14 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size,
                tb_total_steps=total_iter,
                subset='val_ema' if ema else 'val',
                data=OrderedDict([
-                   ('loss', val_meta['loss'].item()),
-                   ('mel_loss', val_meta['mel_loss'].item()),
-                   ('frames/s', num_frames.item() / val_meta['took']),
-                   ('took', val_meta['took'])]),
+                   ('Loss/Total', val_meta['loss'].item()),
+                   ('Loss/Mel', val_meta['mel_loss'].item()),
+                   ('Loss/Duration', val_meta['duration_predictor_loss'].item()),
+                   ('Loss/Pitch', val_meta['pitch_loss'].item()),
+                   #('Error/Duration', val_meta['duration_error'].item()),
+                   #('Error/Pitch', val_meta['pitch_error'].item()),
+                   #('Time/FPS', num_frames.item() / val_meta['took']),
+                   ('Time/Iter time', val_meta['took'])]),
     )
 
     if was_training:
@@ -419,6 +423,10 @@ def main():
 
         epoch_loss = 0.0
         epoch_mel_loss = 0.0
+        epoch_dur_loss = 0.0
+        epoch_pitch_loss = 0.0
+        epoch_dur_error = 0.0
+        epoch_pitch_error = 0.0
         epoch_num_frames = 0
         epoch_frames_per_sec = 0.0
 
@@ -490,20 +498,33 @@ def main():
 
                 iter_time = time.perf_counter() - iter_start_time
                 iter_mel_loss = iter_meta['mel_loss'].item()
-                epoch_frames_per_sec += iter_num_frames / iter_time
+                iter_dur_loss = iter_meta['duration_predictor_loss'].item()
+                iter_pitch_loss = iter_meta['pitch_loss'].item()
+                iter_dur_error = iter_meta['duration_error'].item()
+                iter_pitch_error = iter_meta['pitch_error'].item()
                 epoch_loss += iter_loss
-                epoch_num_frames += iter_num_frames
                 epoch_mel_loss += iter_mel_loss
+                epoch_dur_loss += iter_dur_loss
+                epoch_pitch_loss += iter_pitch_loss
+                epoch_dur_error += iter_dur_error
+                epoch_pitch_error += iter_pitch_error
+                epoch_num_frames += iter_num_frames
+                epoch_frames_per_sec += iter_num_frames / iter_time
 
                 logger.log((epoch, epoch_iter, num_iters),
                            tb_total_steps=total_iter,
                            subset='train',
                            data=OrderedDict([
-                               ('loss', iter_loss),
-                               ('mel_loss', iter_mel_loss),
-                               ('frames/s', iter_num_frames / iter_time),
-                               ('took', iter_time),
-                               ('lrate', optimizer.param_groups[0]['lr'])]),
+                               ('Loss/Total', iter_loss),
+                               ('Loss/Mel', iter_mel_loss),
+                               ('Loss/Duration', iter_dur_loss),
+                               ('Loss/Pitch', iter_pitch_loss),
+                               #('Error/Duration', iter_dur_error),
+                               #('Error/Pitch', iter_pitch_error),
+                               #('Time/FPS', iter_num_frames / iter_time),
+                               ('Hyperparameters/Learning rate', optimizer.param_groups[0]['lr']),
+                               ('Time/Iter time', iter_time),
+                               ]),
                 )
 
                 accumulated_steps = 0
@@ -518,10 +539,14 @@ def main():
                    tb_total_steps=None,
                    subset='train_avg',
                    data=OrderedDict([
-                       ('loss', epoch_loss / epoch_iter),
-                       ('mel_loss', epoch_mel_loss / epoch_iter),
-                       ('frames/s', epoch_num_frames / epoch_time),
-                       ('took', epoch_time)]),
+                       ('Loss/Total', epoch_loss / epoch_iter),
+                       ('Loss/Mel', epoch_mel_loss / epoch_iter),
+                       ('Loss/Duration', epoch_dur_loss / epoch_iter),
+                       ('Loss/Pitch', epoch_pitch_loss / epoch_iter),
+                       #('Error/Duration', epoch_dur_error / epoch_iter),
+                       #('Error/Pitch', epoch_pitch_error / epoch_iter),
+                       #('Time/FPS', epoch_num_frames / epoch_time),
+                       ('Time/Iter time', epoch_time)]),
         )
 
         validate(model, epoch, total_iter, criterion, valset, args.batch_size,
@@ -547,10 +572,14 @@ def main():
                tb_total_steps=None,
                subset='train_avg',
                data=OrderedDict([
-                   ('loss', epoch_loss / epoch_iter),
-                   ('mel_loss', epoch_mel_loss / epoch_iter),
-                   ('frames/s', epoch_num_frames / epoch_time),
-                   ('took', epoch_time)]),
+                   ('Loss/Total', epoch_loss / epoch_iter),
+                   ('Loss/Mel', epoch_mel_loss / epoch_iter),
+                   ('Loss/Duration', epoch_dur_loss / epoch_iter),
+                   ('Loss/Pitch', epoch_pitch_loss / epoch_iter),
+                   #('Error/Duration', epoch_dur_error / epoch_iter),
+                   #('Error/Pitch', epoch_pitch_error / epoch_iter),
+                   #('Time/FPS', epoch_num_frames / epoch_time),
+                   ('Time/Iter time', epoch_time)]),
     )
     validate(model, None, total_iter, criterion, valset, args.batch_size,
              collate_fn, distributed_run, batch_to_gpu, use_gt_durations=True)

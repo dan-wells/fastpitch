@@ -1,4 +1,5 @@
 import atexit
+import datetime
 import glob
 import os
 import re
@@ -15,11 +16,7 @@ tb_loggers = {}
 
 
 class TBLogger:
-    """
-    xyz_dummies: stretch the screen with empty plots so the legend would
-                 always fit for other plots
-    """
-    def __init__(self, enabled, log_dir, name, interval=1, dummies=True):
+    def __init__(self, enabled, log_dir, name, interval=1):
         self.enabled = enabled
         self.interval = interval
         self.cache = {}
@@ -28,9 +25,6 @@ class TBLogger:
                 log_dir=os.path.join(log_dir, name),
                 flush_secs=120, max_queue=200)
             atexit.register(self.summary_writer.close)
-            if dummies:
-                for key in ('aaa', 'zzz'):
-                    self.summary_writer.add_scalar(key, 0.0, 1)
 
     def log(self, step, data):
         for k, v in data.items():
@@ -51,12 +45,11 @@ class TBLogger:
             norms = [p.grad.norm().item() for p in model.parameters()
                      if p.grad is not None]
             for stat in ('max', 'min', 'mean'):
-                self.log_value(step, f'grad_{stat}', getattr(np, stat)(norms),
+                self.log_value(step, f'Gradients/{stat}', getattr(np, stat)(norms),
                                stat=stat)
 
 
 def unique_log_fpath(log_fpath):
-
     if not os.path.isfile(log_fpath):
         return log_fpath
 
@@ -82,7 +75,7 @@ def stdout_step_format(step):
 
 
 def stdout_metric_format(metric, metadata, value):
-    name = metadata.get("name", metric + " : ")
+    name = metadata.get("name", metric + ": ")
     unit = metadata.get("unit", None)
     format = f'{{{metadata.get("format", "")}}}'
     fields = [name, format.format(value) if value is not None else value, unit]
@@ -102,23 +95,33 @@ def init(log_fpath, log_dir, enabled=True, tb_subsets=[], **tb_kw):
         backends = []
 
     dllogger.init(backends=backends)
-    dllogger.metadata("train_lrate", {"name": "lrate", "format": ":>3.2e"})
+    dllogger.metadata("train_Hyperparameters/Learning rate", {"name": "lrate", "format": ":>3.2e"})
 
     for id_, pref in [('train', ''), ('train_avg', 'avg train '),
                       ('val', '  avg val '), ('val_ema', '  EMA val ')]:
 
-        dllogger.metadata(f"{id_}_loss",
+        dllogger.metadata(f"{id_}_Loss/Total",
                           {"name": f"{pref}loss", "format": ":>5.2f"})
-        dllogger.metadata(f"{id_}_mel_loss",
+        dllogger.metadata(f"{id_}_Loss/Mel",
                           {"name": f"{pref}mel loss", "format": ":>5.2f"})
+        dllogger.metadata(f"{id_}_Loss/Duration",
+                          {"name": f"{pref}dur loss", "format": ":>5.2f"})
+        dllogger.metadata(f"{id_}_Loss/Pitch",
+                          {"name": f"{pref}pitch loss", "format": ":>5.2f"})
 
-        dllogger.metadata(f"{id_}_frames/s",
+        dllogger.metadata(f"{id_}_Error/Duration",
+                          {"name": f"{pref}dur error", "format": ":>5.2f"})
+        dllogger.metadata(f"{id_}_Error/Pitch",
+                          {"name": f"{pref}pitch error", "format": ":>5.2f"})
+
+        dllogger.metadata(f"{id_}_Time/FPS",
                           {"name": None, "unit": "frames/s", "format": ":>10.2f"})
-        dllogger.metadata(f"{id_}_took",
+        dllogger.metadata(f"{id_}_Time/Iter time",
                           {"name": "took", "unit": "s", "format": ":>3.2f"})
 
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
     global tb_loggers
-    tb_loggers = {s: TBLogger(enabled, log_dir, name=s, **tb_kw)
+    tb_loggers = {s: TBLogger(enabled, log_dir, name=os.path.join(s, timestamp), **tb_kw)
                   for s in tb_subsets}
 
 
