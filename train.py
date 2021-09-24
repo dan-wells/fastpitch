@@ -48,8 +48,6 @@ from torch.utils.data.distributed import DistributedSampler
 import common.tb_dllogger as logger
 from apex import amp
 from apex.optimizers import FusedAdam, FusedLAMB
-from apex.multi_tensor_apply import multi_tensor_applier
-import amp_C
 
 import common
 import data_functions
@@ -283,20 +281,12 @@ def adjust_learning_rate(total_iter, opt, learning_rate, warmup_iters=None):
 
 
 def apply_ema_decay(model, ema_model, decay):
-    if not decay:
-        return
     st = model.state_dict()
     add_module = hasattr(model, 'module') and not hasattr(ema_model, 'module')
     for k, v in ema_model.state_dict().items():
         if add_module and not k.startswith('module.'):
             k = 'module.' + k
         v.copy_(decay * v + (1 - decay) * st[k])
-
-
-def apply_multi_tensor_ema(model_weight_list, ema_model_weight_list, decay, overflow_buf):
-    if not decay:
-        return
-    amp_C.multi_tensor_axpby(65536, overflow_buf, [ema_model_weight_list, model_weight_list, ema_model_weight_list], decay, 1-decay, -1)
 
 
 def main():
@@ -410,11 +400,6 @@ def main():
 
     batch_to_gpu = data_functions.get_batch_to_gpu('FastPitch')
 
-    if args.ema_decay:
-        ema_model_weight_list, model_weight_list, overflow_buf_for_ema = init_multi_tensor_ema(model, ema_model)
-    else:
-        ema_model_weight_list, model_weight_list, overflow_buf_for_ema = None, None, None
-
     model.train()
 
     torch.cuda.synchronize()
@@ -494,7 +479,8 @@ def main():
                         model.parameters(), args.grad_clip_thresh)
 
                 optimizer.step()
-                apply_multi_tensor_ema(model_weight_list, ema_model_weight_list, args.ema_decay, overflow_buf_for_ema)
+                if args.ema_decay:
+                    apply_ema_decay(model, ema_model, args.ema_decay)
 
                 iter_time = time.perf_counter() - iter_start_time
                 iter_mel_loss = iter_meta['mel_loss'].item()
