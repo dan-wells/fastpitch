@@ -34,13 +34,10 @@ import re
 import time
 import warnings
 from collections import defaultdict, OrderedDict
-from contextlib import contextmanager
 
 import numpy as np
 import torch
 import torch.distributed as dist
-from scipy.io.wavfile import write as write_wav
-from torch.autograd import Variable
 from torch.cuda.amp import autocast, GradScaler
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim import Adam
@@ -48,9 +45,8 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch_optimizer import Lamb
 
-import common.tb_dllogger as logger
-
 import common
+import common.tb_dllogger as logger
 import data_functions
 import loss_functions
 import models
