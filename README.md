@@ -1,6 +1,6 @@
 # FastPitch 1.0 for PyTorch
 
-This repository provides a script and recipe to train the FastPitch TTS model originally developed by [NVIDIA](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechSynthesis/FastPitch).
+This repository provides a script and recipe to train the FastPitch TTS model, originally developed by [NVIDIA](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechSynthesis/FastPitch).
 
 <details>
 <summary><b>Contents</b></summary>
@@ -13,27 +13,12 @@ This repository provides a script and recipe to train the FastPitch TTS model or
     * [Scripts and sample code](#scripts-and-sample-code)
     * [Parameters](#parameters)
     * [Command-line options](#command-line-options)
-    * [Getting the data](#getting-the-data)
-        * [Dataset guidelines](#dataset-guidelines)
-        * [Multi-dataset](#multi-dataset)
+    * [Data preprocessing](#data-preprocessing)
     * [Training process](#training-process)
     * [Inference process](#inference-process)
 - [Performance](#performance)
     * [Benchmarking](#benchmarking)
-        * [Training performance benchmark](#training-performance-benchmark)
-        * [Inference performance benchmark](#inference-performance-benchmark)
     * [Results](#results)
-        * [Training accuracy results](#training-accuracy-results)
-            * [Training accuracy: NVIDIA DGX A100 (8x A100 40GB)](#training-accuracy-nvidia-dgx-a100-8x-a100-40gb)
-            * [Training accuracy: NVIDIA DGX-1 (8x V100 16GB)](#training-accuracy-nvidia-dgx-1-8x-v100-16gb)
-        * [Training performance results](#training-performance-results)
-            * [Training performance: NVIDIA DGX A100 (8x A100 40GB)](#training-performance-nvidia-dgx-a100-8x-a100-40gb)
-            * [Training performance: NVIDIA DGX-1 (8x V100 16GB)](#training-performance-nvidia-dgx-1-8x-v100-16gb)
-            * [Expected training time](#expected-training-time)
-        * [Inference performance results](#inference-performance-results)
-            * [Inference performance: NVIDIA DGX A100 (1x A100 40GB)](#inference-performance-nvidia-dgx-a100-gpu-1x-a100-40gb)
-            * [Inference performance: NVIDIA DGX-1 (1x V100 16GB)](#inference-performance-nvidia-dgx-1-1x-v100-16gb)
-            * [Inference performance: NVIDIA T4](#inference-performance-nvidia-t4)
 
 </details>
 
@@ -228,7 +213,7 @@ DLL 2021-09-29 16:36:42.089743 - epoch    1 | iter   2/281 | loss 40.42 | mel lo
 DLL 2021-09-29 16:36:42.313590 - epoch    1 | iter   3/281 | loss 38.49 | mel loss 38.07 | dur loss  2.96 | pitch loss  1.28 | lrate 9.49e-06 | took 0.22 s
 ```
 
-### Getting the data
+### Data preprocessing
 
 The FastPitch and WaveGlow models were trained on the LJSpeech-1.1 dataset.
 The `./scripts/download_dataset.sh` script will automatically download and extract the dataset to the `./LJSpeech-1.1` directory.
