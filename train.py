@@ -42,12 +42,13 @@ import torch.distributed as dist
 from scipy.io.wavfile import write as write_wav
 from torch.autograd import Variable
 from torch.nn.parallel import DistributedDataParallel
+from torch.optim import Adam
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
+from torch_optimizer import Lamb
 
 import common.tb_dllogger as logger
 from apex import amp
-from apex.optimizers import FusedAdam, FusedLAMB
 
 import common
 import data_functions
@@ -90,7 +91,7 @@ def parse_args(parser):
 
     optimization = parser.add_argument_group('optimization setup')
     optimization.add_argument('--optimizer', type=str, default='lamb',
-                              help='Optimization algorithm')
+                              choices=['adam', 'lamb'], help='Optimization algorithm')
     optimization.add_argument('-lr', '--learning-rate', type=float, required=True,
                               help='Learning rate')
     optimization.add_argument('--weight-decay', default=1e-6, type=float,
@@ -336,11 +337,9 @@ def main():
     kw = dict(lr=args.learning_rate, betas=(0.9, 0.98), eps=1e-9,
               weight_decay=args.weight_decay)
     if args.optimizer == 'adam':
-        optimizer = FusedAdam(model.parameters(), **kw)
+        optimizer = Adam(model.parameters(), **kw)
     elif args.optimizer == 'lamb':
-        optimizer = FusedLAMB(model.parameters(), **kw)
-    else:
-        raise ValueError
+        optimizer = Lamb(model.parameters(), **kw)
 
     if args.amp:
         model, optimizer = amp.initialize(model, optimizer, opt_level="O1")

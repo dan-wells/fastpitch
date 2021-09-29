@@ -9,3 +9,4 @@ praat-parselmouth==0.3.3
 scipy
 tensorboardX==2.0
 tgt
+torch_optimizer
