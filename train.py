@@ -41,6 +41,7 @@ import torch
 import torch.distributed as dist
 from scipy.io.wavfile import write as write_wav
 from torch.autograd import Variable
+from torch.cuda.amp import autocast, GradScaler
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim import Adam
 from torch.utils.data import DataLoader
@@ -48,7 +49,6 @@ from torch.utils.data.distributed import DistributedSampler
 from torch_optimizer import Lamb
 
 import common.tb_dllogger as logger
-from apex import amp
 
 import common
 import data_functions
@@ -177,12 +177,19 @@ def last_checkpoint(output):
         return None
 
 
-def save_checkpoint(local_rank, model, ema_model, optimizer, epoch, total_iter,
-                    config, amp_run, filepath):
-    if local_rank != 0:
+def maybe_save_checkpoint(args, model, ema_model, optimizer, scaler, epoch,
+                          total_iter, config):
+    if args.local_rank != 0:
         return
 
-    print(f"Saving model and optimizer state at epoch {epoch} to {filepath}")
+    intermediate = (args.epochs_per_checkpoint > 0
+                    and epoch % args.epochs_per_checkpoint == 0)
+
+    if not intermediate and epoch < args.epochs:
+        return
+
+    fpath = os.path.join(args.output, f"FastPitch_checkpoint_{epoch}.pt")
+    print(f"Saving model and optimizer state at epoch {epoch} to {fpath}")
     ema_dict = None if ema_model is None else ema_model.state_dict()
     checkpoint = {'epoch': epoch,
                   'iteration': total_iter,
@@ -190,27 +197,26 @@ def save_checkpoint(local_rank, model, ema_model, optimizer, epoch, total_iter,
                   'state_dict': model.state_dict(),
                   'ema_state_dict': ema_dict,
                   'optimizer': optimizer.state_dict()}
-    if amp_run:
-        checkpoint['amp'] = amp.state_dict()
-    torch.save(checkpoint, filepath)
+    if args.amp:
+        checkpoint['scaler'] = scaler.state_dict()
+    torch.save(checkpoint, fpath)
 
 
-def load_checkpoint(local_rank, model, ema_model, optimizer, epoch, total_iter,
-                    config, amp_run, filepath, world_size):
-    if local_rank == 0:
+def load_checkpoint(args, model, ema_model, optimizer, scaler, epoch,
+                    total_iter, config, filepath):
+    if args.local_rank == 0:
         print(f'Loading model and optimizer state from {filepath}')
     checkpoint = torch.load(filepath, map_location='cpu')
     epoch[0] = checkpoint['epoch'] + 1
     total_iter[0] = checkpoint['iteration']
-    config = checkpoint['config']
 
     sd = {k.replace('module.', ''): v
           for k, v in checkpoint['state_dict'].items()}
     getattr(model, 'module', model).load_state_dict(sd)
     optimizer.load_state_dict(checkpoint['optimizer'])
 
-    if amp_run:
-        amp.load_state_dict(checkpoint['amp'])
+    if args.amp:
+        scaler.load_state_dict(checkpoint['scaler'])
 
     if ema_model is not None:
         ema_model.load_state_dict(checkpoint['ema_state_dict'])
@@ -341,8 +347,7 @@ def main():
     elif args.optimizer == 'lamb':
         optimizer = Lamb(model.parameters(), **kw)
 
-    if args.amp:
-        model, optimizer = amp.initialize(model, optimizer, opt_level="O1")
+    scaler = GradScaler(enabled=args.amp)
 
     if args.ema_decay > 0:
         ema_model = copy.deepcopy(model)
@@ -367,9 +372,8 @@ def main():
         ch_fpath = None
 
     if ch_fpath is not None:
-        load_checkpoint(args.local_rank, model, ema_model, optimizer, start_epoch,
-                        start_iter, model_config, args.amp, ch_fpath,
-                        args.world_size)
+        load_checkpoint(args, model, ema_model, optimizer, scaler,
+                        start_epoch, start_iter, model_config, ch_fpath)
 
     start_epoch = start_epoch[0]
     total_iter = start_iter[0]
@@ -439,16 +443,18 @@ def main():
                 model.zero_grad()
 
             x, y, num_frames = batch_to_gpu(batch, args.input_type)
-            y_pred = model(x, use_gt_durations=True)
-            loss, meta = criterion(y_pred, y)
 
-            loss /= args.gradient_accumulation_steps
+            with autocast(enabled=args.amp):
+                y_pred = model(x, use_gt_durations=True)
+                loss, meta = criterion(y_pred, y)
+
+                loss /= args.gradient_accumulation_steps
+
             meta = {k: v / args.gradient_accumulation_steps
                     for k, v in meta.items()}
 
             if args.amp:
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
+                scaler.scale(loss).backward()
             else:
                 loss.backward()
 
@@ -468,16 +474,18 @@ def main():
             iter_meta = {k: iter_meta.get(k, 0) + meta.get(k, 0) for k in meta}
 
             if accumulated_steps % args.gradient_accumulation_steps == 0:
-
-                logger.log_grads_tb(total_iter, model)
                 if args.amp:
+                    scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(
-                        amp.master_params(optimizer), args.grad_clip_thresh)
+                        model.parameters(), args.grad_clip_thresh)
+                    scaler.step(optimizer)
+                    scaler.update()
                 else:
                     torch.nn.utils.clip_grad_norm_(
                         model.parameters(), args.grad_clip_thresh)
+                    optimizer.step()
+                logger.log_grads_tb(total_iter, model)
 
-                optimizer.step()
                 if args.ema_decay:
                     apply_ema_decay(model, ema_model, args.ema_decay)
 
@@ -543,13 +551,8 @@ def main():
                      args.batch_size, collate_fn, distributed_run, batch_to_gpu,
                      use_gt_durations=True, ema=True)
 
-        if (epoch > 0 and args.epochs_per_checkpoint > 0 and
-            (epoch % args.epochs_per_checkpoint == 0) and args.local_rank == 0):
-
-            checkpoint_path = os.path.join(
-                args.output, f"FastPitch_checkpoint_{epoch}.pt")
-            save_checkpoint(args.local_rank, model, ema_model, optimizer, epoch,
-                            total_iter, model_config, args.amp, checkpoint_path)
+        maybe_save_checkpoint(args, model, ema_model, optimizer, scaler,
+                              epoch, total_iter, model_config)
         logger.flush()
 
     # Finished training
@@ -568,13 +571,6 @@ def main():
     )
     validate(model, None, total_iter, criterion, valset, args.batch_size,
              collate_fn, distributed_run, batch_to_gpu, use_gt_durations=True)
-
-    if (epoch > 0 and args.epochs_per_checkpoint > 0 and
-        (epoch % args.epochs_per_checkpoint != 0) and args.local_rank == 0):
-        checkpoint_path = os.path.join(
-            args.output, f"FastPitch_checkpoint_{epoch}.pt")
-        save_checkpoint(args.local_rank, model, ema_model, optimizer, epoch,
-                        total_iter, model_config, args.amp, checkpoint_path)
 
 
 if __name__ == '__main__':
