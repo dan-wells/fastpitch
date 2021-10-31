@@ -27,6 +27,7 @@
 
 import argparse
 import models
+import os
 import time
 import sys
 import warnings
@@ -406,7 +407,12 @@ def main():
                 if args.save_mels and args.output is not None and reps == 1:
                     for i, _mel in enumerate(mel):
                         _mel = _mel[:, :mel_lens[i]]
-                        fname = b['mel_output'][i] if 'mel_output' in b else f'mel_{(n * args.batch_size) + i}.pt'
+                        if 'mel_output' in b:
+                            fname = b['mel_output'][i]
+                        elif 'output' in b:
+                            fname = os.path.splitext(b['output'][i])[0] + '.pt'
+                        else:
+                            fname = f'mel_{(n * args.batch_size) + i}.pt'
                         mel_path = Path(args.output, fname)
                         torch.save(_mel, mel_path)
 
