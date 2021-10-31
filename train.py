@@ -110,15 +110,17 @@ def parse_args(parser):
                       required=True, help='Paths to validation filelists')
     dataset.add_argument('--pitch-mean-std-file', type=str, default=None,
                          help='Path to pitch stats to be stored in the model')
+    dataset.add_argument('--input-type', type=str, default='char',
+                         choices=['char', 'phone', 'pf', 'unit'],
+                         help='Input symbols used, either char (text), phone, '
+                         'pf (phonological feature vectors) or unit (quantized '
+                         'acoustic representation IDs)')
+    dataset.add_argument('--symbol-set', type=str, default='english_basic',
+                         help='Define symbol set for input sequences. For '
+                         'quantized unit inputs, pass the size of the vocabulary.')
     dataset.add_argument('--text-cleaners', nargs='*',
                          default=['english_cleaners'], type=str,
-                         help='Type of text cleaners for input text')
-    dataset.add_argument('--symbol-set', type=str, default='english_basic',
-                         help='Define symbol set for input text')
-    dataset.add_argument('--input-type', type=str, default='char',
-                         choices=['char', 'phone', 'pf'],
-                         help='Input symbols used, either char (text), phone or '
-                         'pf (phonological feature vectors)')
+                         help='Type of text cleaners for input text.')
 
     cond = parser.add_argument_group('conditioning on additional attributes')
     cond.add_argument('--n-speakers', type=int, default=1,

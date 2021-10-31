@@ -17,6 +17,7 @@ _words_re = re.compile(r"([a-zA-ZÀ-ž]+['][a-zA-ZÀ-ž]{1,2}|[a-zA-ZÀ-ž]+)|([
 # Regular expression separating words enclosed in curly braces for cleaning
 _arpa_re = re.compile(r'{[^}]+}|\S+')
 
+
 # Mapping from Combilex phones to IPA
 _combilex_to_ipa = {
     '3': 'ɜ', '5': 'ɫ', '@': 'ə', 'A': 'ɑ', 'D': 'ð', 'E': 'ɛ', 'I': 'ɪ',
@@ -27,6 +28,7 @@ _combilex_to_ipa = {
     'r': 'ɹ', 's': 's', 't': 't', 'tS': 't͡ʃ', 'u': 'u', 'v': 'v', 'w': 'w',
     'z': 'z'
 }
+
 
 class PhoneProcessing(object):
     def __init__(self, symbol_set, symbol_type='phone'):
@@ -42,7 +44,6 @@ class PhoneProcessing(object):
         self.ft = panphon.FeatureTable()
         self.sil_symbols = ['sp', 'spn', 'sil']
         self.sil_pf_vec = [1 if i == 'sil' else 0 for i in self.symbols]
-
 
     def encode_text(self, text):
         if self.symbol_type == 'pf':
@@ -95,7 +96,6 @@ class TextProcessing(object):
         self.p_arpabet = p_arpabet
         self.handle_arpabet = handle_arpabet
         self.handle_arpabet_ambiguous = handle_arpabet_ambiguous
-
 
     def text_to_sequence(self, text):
         sequence = []
@@ -220,3 +220,11 @@ class TextProcessing(object):
             return text_encoded, text_clean, text_arpabet
 
         return text_encoded
+
+class UnitProcessing(object):
+    def __init__(self, symbol_set, symbol_type):
+        self.symbols = get_symbols(symbol_set, symbol_type)
+
+    def encode_text(self, text):
+        # embedding table indices should match 0-based unit IDs
+        return [int(i) for i in text.split(' ')]

@@ -23,6 +23,12 @@ def get_symbols(symbol_set='english_basic', symbol_type=None):
         ft = FeatureTable()
         _silence = ['sil']
         symbols = ft.names + _silence # 24 ~SPE features plus silence
+    elif symbol_type == 'unit':
+        _pad = ['_']
+        # pass number of quantized units in symbol_set
+        _units = list(range(int(symbol_set)))
+        # embedding table indices will match 0-based unit IDs
+        symbols = _units + _pad
     elif symbol_set == 'english_basic':
         _pad = '_'
         _punctuation = '!\'(),.:;? '
@@ -87,8 +93,8 @@ def get_symbols(symbol_set='english_basic', symbol_type=None):
     return symbols
 
 
-def get_pad_idx(symbol_set='english_basic'):
+def get_pad_idx(symbol_set='english_basic', symbol_type=None):
     try:
-        return get_symbols(symbol_set).index('_')
+        return get_symbols(symbol_set, symbol_type).index('_')
     except ValueError:
         raise Exception("{} symbol set not used yet".format(symbol_set))

@@ -41,7 +41,7 @@ from torch.utils.data import DataLoader
 from common import utils
 from inference import load_and_setup_model
 from tacotron2.data_function import TextMelLoader, TextMelCollate, batch_to_gpu
-from common.text.text_processing import TextProcessing, PhoneProcessing
+from common.text.text_processing import TextProcessing, PhoneProcessing, UnitProcessing
 
 
 def parse_args(parser):
@@ -66,8 +66,9 @@ def parse_args(parser):
     parser.add_argument('--symbol-set', type=str, default='english_basic',
                         help='Define symbol set for input text')
     parser.add_argument('--input-type', type=str, default='char',
-                         choices=['char', 'phone'],
-                         help='Input symbols used, either char (text) or phone symbols.')
+                        choices=['char', 'phone', 'unit'],
+                        help='Input symbols used, either char (text), phone '
+                        'or quantized unit symbols.')
     parser.add_argument('--max-wav-value', default=32768.0, type=float,
                         help='Maximum audiowave value')
     parser.add_argument('--peak-norm', action='store_true',
@@ -102,7 +103,10 @@ def parse_args(parser):
     parser.add_argument('--extract-pitch-trichar', action='store_true',
                         help='Extract pitch averaged over input characters')
     parser.add_argument('--extract-durs-from-textgrids', action='store_true',
-                        help='Extract char durations from Praat TextGrids')
+                        help='Extract phone durations from Praat TextGrids')
+    parser.add_argument('--extract-durs-from-unit-sequences', action='store_true',
+                        help='Extract unit durations by run-length encoding '
+                        'quantized unit sequences')
     parser.add_argument('--trim-silence', default=None, type=float,
                         help='Trim leading and trailing silences from audio using TextGrids. '
                         'Specify desired silence duration to leave (0 to trim completely)')
@@ -116,11 +120,13 @@ def parse_args(parser):
 class FilenamedLoader(TextMelLoader):
     def __init__(self, filenames, **kwargs):
         # dict_args = vars(args)
-        kwargs['audiopaths_and_text'] = kwargs['wav_text_filelist']
+        kwargs['audiopaths_and_text'] = [kwargs['wav_text_filelist']]
         kwargs['load_mel_from_disk'] = False
         super(FilenamedLoader, self).__init__(**kwargs)
         if kwargs['input_type'] == 'phone':
             self.tp = PhoneProcessing(kwargs['symbol_set'])
+        elif kwargs['input_type'] == 'unit':
+            self.tp = UnitProcessing(kwargs['symbol_set'], kwargs['input_type'])
         else:
             self.tp = TextProcessing(kwargs['symbol_set'], kwargs['text_cleaners'])
         self.filenames = filenames
@@ -173,6 +179,19 @@ def parse_textgrid(tier, sampling_rate, hop_length):
         durations.append(int(np.ceil(e * sampling_rate / hop_length)
                              - np.ceil(s * sampling_rate / hop_length)))
     return phones, durations, start_time, end_time
+
+
+def run_length_encode(symbols):
+    run_lengths = []
+    dur = 1
+    for u0, u1 in zip(symbols, symbols[1:]):
+        if u1 == u0:
+            dur += 1
+        else:
+            run_lengths.append([u0, dur])
+            dur = 1
+    run_lengths.append([u1, dur])
+    return run_lengths
 
 
 def calculate_pitch(wav, durs, start=None, end=None):
@@ -235,7 +254,9 @@ def main():
         raise ValueError(f'Invalid options {unk_args}')
 
     if args.extract_pitch_char:
-        assert args.extract_durations or args.extract_durs_from_textgrids, \
+        assert (args.extract_durations or
+                args.extract_durs_from_textgrids or
+                args.extract_durs_from_unit_sequences), \
             "Durations required for pitch extraction"
 
     DLLogger.init(backends=[JSONStreamBackend(Verbosity.DEFAULT, args.log_file),
@@ -261,6 +282,8 @@ def main():
             Path(args.dataset_path, datum).mkdir(parents=False, exist_ok=True)
         if getattr(args, 'extract_durs_from_textgrids'):
             Path(args.dataset_path, 'durations').mkdir(parents=False, exist_ok=True)
+        if getattr(args, 'extract_durs_from_unit_sequences'):
+            Path(args.dataset_path, 'durations').mkdir(parents=False, exist_ok=True)
         if getattr(args, 'output_meta_file'):
             metadata = {}
 
@@ -279,7 +302,7 @@ def main():
         tik = time.time()
         fnames = batch[-1]
         x, _, _ = batch_to_gpu(batch[:-1])
-        _, text_lens, mels_padded, _, mel_lens = x
+        texts_padded, text_lens, mels_padded, _, mel_lens = x
 
         for j, mel in enumerate(mels_padded):
             fpath = Path(args.dataset_path, 'mels', fnames[j] + '.pt')
@@ -337,6 +360,31 @@ def main():
                 # account for texts in other scenarios just in case
                 if args.output_meta_file is not None:
                     metadata[fnames[j]] = phones
+        if args.extract_durs_from_unit_sequences:
+            durations = []
+            for j, mel_len in enumerate(mel_lens):
+                text = texts_padded[j][:text_lens[j]].cpu().numpy()
+                rle_text = run_length_encode(text)
+                units, durs = (list(i) for i in zip(*rle_text))  # unpack list of tuples to two sequences
+                total_dur = sum(durs)
+                if total_dur != mel_len:
+                    dur_diff = mel_len - total_dur
+                    durs[-1] += dur_diff
+                    # TODO: Work out why some utterances are 2 frames short.
+                    # Expected for extracted HuBERT feature sequences to be
+                    # consistently 1-frame short because they truncate rather than
+                    # padding utterances which don't exactly fit into 0.02 s chunks,
+                    # but not sure where this extra missing frame comes from
+                    if dur_diff != 1:
+                        DLLogger.log(step="Feature length mismatch {}: {} mels, {} durs".format(
+                            fnames[j], mel_len, total_dur), data={})
+                assert sum(durs) == mel_len, f'Length mismatch: {fnames[j]}, {sum(durs)} != {mel_len}'
+                dur = torch.LongTensor(durs)
+                durations.append(dur)
+                fpath = Path(args.dataset_path, 'durations', fnames[j] + '.pt')
+                torch.save(dur.cpu().int(), fpath)
+                if args.output_meta_file is not None:
+                    metadata[fnames[j]] = [str(i) for i in units]
         if args.extract_pitch_mel or args.extract_pitch_char or args.extract_pitch_trichar:
             for j, dur in enumerate(durations):
                 fpath = Path(args.dataset_path, 'pitch_char', fnames[j] + '.pt')

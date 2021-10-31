@@ -45,7 +45,8 @@ from dllogger import StdOutBackend, JSONStreamBackend, Verbosity
 from common import utils
 from common.tb_dllogger import (init_inference_metadata, stdout_metric_format,
                                 unique_log_fpath)
-from common.text.text_processing import TextProcessing, PhoneProcessing
+from common.text.symbols import get_pad_idx
+from common.text.text_processing import TextProcessing, PhoneProcessing, UnitProcessing
 from pitch_transform import pitch_transform_custom
 from waveglow import model as glow
 from waveglow.denoiser import Denoiser
@@ -114,15 +115,17 @@ def parse_args(parser):
                            help='Apply the transform from pitch_transform.py')
 
     text_processing = parser.add_argument_group('Text processing parameters')
+    text_processing.add_argument('--input-type', type=str, default='char',
+                                 choices=['char', 'phone', 'pf', 'unit'],
+                                 help='Input symbols used, either char (text), phone, '
+                                 'pf (phonological feature vectors) or unit (quantized '
+                                 'acoustic representation IDs)')
+    text_processing.add_argument('--symbol-set', type=str, default='english_basic',
+                                 help='Define symbol set for input sequences. For '
+                                 'quantized unit inputs, pass the size of the vocabulary.')
     text_processing.add_argument('--text-cleaners', nargs='*',
                                  default=['english_cleaners'], type=str,
-                                 help='Type of text cleaners for input text')
-    text_processing.add_argument('--symbol-set', type=str, default='english_basic',
-                                 help='Define symbol set for input text')
-    text_processing.add_argument('--input-type', type=str, default='char',
-                                 choices=['char', 'phone', 'pf'],
-                                 help='Input symbols used, either char (text), phone or '
-                                 'pf (phonological feature vectors).')
+                                 help='Type of text cleaners for input text.')
 
     cond = parser.add_argument_group('conditioning on additional attributes')
     cond.add_argument('--n-speakers', type=int, default=1,
@@ -198,6 +201,8 @@ def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners
                            load_pitch=False):
     if input_type == 'char':
         tp = TextProcessing(symbol_set, text_cleaners)
+    elif input_type == 'unit':
+        tp = UnitProcessing(symbol_set, input_type)
     else:
         tp = PhoneProcessing(symbol_set, input_type)
 
@@ -233,7 +238,8 @@ def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners
         batch = {f: values[b:b+batch_size] for f, values in fields.items()}
         for f in batch:
             if f == 'text':
-                batch[f] = pad_sequence(batch[f], batch_first=True)
+                batch[f] = pad_sequence(batch[f], batch_first=True,
+                                        padding_value=get_pad_idx(symbol_set, input_type))
             elif f == 'mel' and load_mels:
                 batch[f] = pad_sequence(batch[f], batch_first=True).permute(0, 2, 1)
             elif f == 'pitch' and load_pitch:

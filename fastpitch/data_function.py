@@ -31,7 +31,7 @@ import torch
 
 from common.utils import to_gpu
 from tacotron2.data_function import TextMelLoader
-from common.text.text_processing import TextProcessing, PhoneProcessing
+from common.text.text_processing import TextProcessing, PhoneProcessing, UnitProcessing
 
 
 class TextMelAliLoader(TextMelLoader):
@@ -41,6 +41,8 @@ class TextMelAliLoader(TextMelLoader):
         super(TextMelAliLoader, self).__init__(**kwargs)
         if kwargs['input_type'] == 'char':
             self.tp = TextProcessing(kwargs['symbol_set'], kwargs['text_cleaners'])
+        elif kwargs['input_type'] == 'unit':
+            self.tp = UnitProcessing(kwargs['symbol_set'], kwargs['input_type'])
         else:
             self.tp = PhoneProcessing(kwargs['symbol_set'], kwargs['input_type'])
         self.n_symbols = len(self.tp.symbols)
