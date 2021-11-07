@@ -69,14 +69,16 @@ def parse_args(parser):
                         help='Run inference on a GPU using CUDA')
     parser.add_argument('--cudnn-benchmark', action='store_true',
                         help='Enable cudnn benchmark mode')
-    parser.add_argument('--fastpitch', type=str,
+    parser.add_argument('--fastpitch', type=str, default='',
                         help='Full path to the generator checkpoint file (skip to use ground truth mels)')
-    parser.add_argument('--waveglow', type=str,
+    parser.add_argument('--waveglow', type=str, default='',
                         help='Full path to the WaveGlow model checkpoint file (skip to only generate mels)')
     parser.add_argument('-s', '--sigma-infer', default=0.9, type=float,
                         help='WaveGlow sigma')
     parser.add_argument('-d', '--denoising-strength', default=0.01, type=float,
                         help='WaveGlow denoising')
+    parser.add_argument('--wn-channels', default=256, type=int,
+                        help='WaveGlow, number of channels in WaveNet layers')
     parser.add_argument('-sr', '--sampling-rate', default=22050, type=int,
                         help='Sampling rate')
     parser.add_argument('--stft-hop-length', type=int, default=256,
@@ -326,7 +328,7 @@ def main():
 
     device = torch.device('cuda' if args.cuda else 'cpu')
 
-    if args.fastpitch != 'SKIP':
+    if args.fastpitch:
         generator = load_and_setup_model(
             'FastPitch', parser, args.fastpitch, args.amp, device,
             unk_args=unk_args, forward_is_infer=True, ema=args.ema,
@@ -337,7 +339,7 @@ def main():
     else:
         generator = None
 
-    if args.waveglow != 'SKIP':
+    if args.waveglow:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             waveglow = load_and_setup_model(
