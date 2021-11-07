@@ -473,10 +473,10 @@ def main():
     # TODO: only handling mels, durations, pitch_char and texts for now
     if args.output_meta_file is not None:
         with open(args.output_meta_file, 'w') as meta_out:
-            for fname, text in metadata.items():
+            for fname in filenames:
                 meta_out.write(
                     'mels/{0}.pt|durations/{0}.pt|pitch_char/{0}.pt|{1}\n'.format(
-                        fname, ' '.join(text)))
+                        fname, ' '.join(metadata[fname])))
 
     DLLogger.flush()
 
