@@ -206,7 +206,8 @@ def load_fields(fpath):
 
 def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners,
                            batch_size=128, dataset=None, load_mels=False,
-                           load_pitch=False, load_duration=False):
+                           load_pitch=False, load_duration=False,
+                           load_speaker=False):
     if input_type == 'char':
         tp = TextProcessing(symbol_set, text_cleaners)
     elif input_type == 'unit':
@@ -230,18 +231,18 @@ def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners
         fields['mel'] = [
             torch.load(os.path.join(dataset, fields['mel'][i])).t() for i in order]
         fields['mel_lens'] = torch.LongTensor([t.size(0) for t in fields['mel']])
-
     if load_pitch:
         assert 'pitch' in fields
         fields['pitch'] = [
             torch.load(os.path.join(dataset, fields['pitch'][i])) for i in order]
         fields['pitch_lens'] = torch.LongTensor([t.size(0) for t in fields['pitch']])
-
     if load_duration:
         assert 'duration' in fields
         fields['duration'] = [
-
             torch.load(os.path.join(dataset, fields['duration'][i])) for i in order]
+    if load_speaker:
+        assert 'speaker' in fields
+        fields['speaker'] = torch.LongTensor([int(fields['speaker'][i]) for i in order])
     if 'output' in fields:
         fields['output'] = [fields['output'][i] for i in order]
 
@@ -363,7 +364,8 @@ def main():
     batches = prepare_input_sequence(
         fields, device, args.input_type, args.symbol_set, args.text_cleaners,
         args.batch_size, args.dataset_path, load_mels=(generator is None),
-        load_pitch=('pitch' in fields), load_duration=('duration' in fields))
+        load_pitch=('pitch' in fields), load_duration=('duration' in fields),
+        load_speaker=('speaker' in fields))
 
     # Use real data rather than synthetic - FastPitch predicts len
     for _ in tqdm(range(args.warmup_steps), 'Warmup'):
@@ -406,6 +408,7 @@ def main():
             else:
                 gen_kw['dur_tgt'] = b['duration'] if 'duration' in b else None
                 gen_kw['pitch_tgt'] = b['pitch'] if 'pitch' in b else None
+                gen_kw['speaker'] = b['speaker'] if 'speaker' in b else args.speaker
                 with torch.no_grad(), gen_measures:
                     mel, mel_lens, *_ = generator(b['text'], **gen_kw)
 
