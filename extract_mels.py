@@ -117,12 +117,12 @@ def parse_args(parser):
     return parser
 
 
-class FilenamedLoader(TextMelLoader):
+class FilenamesLoader(TextMelLoader):
     def __init__(self, filenames, **kwargs):
         # dict_args = vars(args)
         kwargs['audiopaths_and_text'] = [kwargs['wav_text_filelist']]
         kwargs['load_mel_from_disk'] = False
-        super(FilenamedLoader, self).__init__(**kwargs)
+        super(FilenamesLoader, self).__init__(**kwargs)
         if kwargs['input_type'] == 'phone':
             self.tp = PhoneProcessing(kwargs['symbol_set'])
         elif kwargs['input_type'] == 'unit':
@@ -132,7 +132,7 @@ class FilenamedLoader(TextMelLoader):
         self.filenames = filenames
 
     def __getitem__(self, index):
-        mel_text = super(FilenamedLoader, self).__getitem__(index)
+        mel_text = super(FilenamesLoader, self).__getitem__(index)
         return mel_text + (self.filenames[index],)
 
 
@@ -291,7 +291,7 @@ def main():
                  for l in open(args.wav_text_filelist, 'r')]
     # Compatibility with Tacotron2 Data loader
     args.n_speakers = 1
-    dataset = FilenamedLoader(filenames, **vars(args))
+    dataset = FilenamesLoader(filenames, **vars(args))
     # TextMelCollate supports only n_frames_per_step=1
     data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False,
                              sampler=None, num_workers=0,
