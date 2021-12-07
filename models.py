@@ -25,6 +25,7 @@
 #
 # *****************************************************************************
 
+import json
 import sys
 from typing import Optional
 from os.path import abspath, dirname
@@ -37,6 +38,8 @@ from fastpitch.model import FastPitch as _FastPitch
 from fastpitch.model_jit import FastPitch as _FastPitchJIT
 from tacotron2.model import Tacotron2
 from waveglow.model import WaveGlow
+import hifigan
+from hifigan.model import Generator as HiFiGanGenerator
 from common.text.symbols import get_symbols, get_pad_idx
 
 
@@ -47,6 +50,9 @@ def parse_model_args(model_name, parser, add_help=False):
     if model_name == 'WaveGlow':
         from waveglow.arg_parser import parse_waveglow_args
         return parse_waveglow_args(parser, add_help)
+    if model_name == 'HiFi-GAN':
+        from hifigan.arg_parser import parse_hifigan_args
+        return parse_hifigan_args(parser, add_help)
     elif model_name == 'FastPitch':
         from fastpitch.arg_parser import parse_fastpitch_args
         return parse_fastpitch_args(parser, add_help)
@@ -75,7 +81,6 @@ def get_model(model_name, model_config, device,
             model = Tacotron2__forward_is_infer(**model_config)
         else:
             model = Tacotron2(**model_config)
-
     elif model_name == 'WaveGlow':
         if forward_is_infer:
             class WaveGlow__forward_is_infer(WaveGlow):
@@ -84,7 +89,6 @@ def get_model(model_name, model_config, device,
             model = WaveGlow__forward_is_infer(**model_config)
         else:
             model = WaveGlow(**model_config)
-
     elif model_name == 'FastPitch':
         if forward_is_infer:
             if jitable:
@@ -111,13 +115,12 @@ def get_model(model_name, model_config, device,
             model = FastPitch__forward_is_infer(**model_config)
         else:
             model = _FastPitch(**model_config)
-
+    elif model_name == 'HiFi-GAN':
+        model = HiFiGanGenerator(model_config)
     else:
         raise NotImplementedError(model_name)
-
     if uniform_initialize_bn_weight:
         init_bn(model)
-
     return model.to(device)
 
 
@@ -217,6 +220,10 @@ def get_model_config(model_name, args):
             speaker_emb_weight=args.speaker_emb_weight
         )
         return model_config
-
+    elif model_name == "HiFi-GAN":
+        with open(args.hifigan_config) as f:
+            model_config = json.load(f)
+        model_config = hifigan.AttrDict(model_config)
+        return model_config
     else:
         raise NotImplementedError(model_name)

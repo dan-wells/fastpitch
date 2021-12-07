@@ -70,12 +70,16 @@ def parse_args(parser):
                         help='Enable cudnn benchmark mode')
     parser.add_argument('--fastpitch', type=str, default='',
                         help='Full path to the generator checkpoint file (skip to use ground truth mels)')
-    parser.add_argument('--waveglow', type=str, default='',
-                        help='Full path to the WaveGlow model checkpoint file (skip to only generate mels)')
+    parser.add_argument('--vocoder', type=str, default='', choices=['WaveGlow', 'HiFi-GAN'],
+                        help='Vocoder model type if generating audio (skip to only generate mels)')
+    parser.add_argument('--vocoder-checkpoint', type=str, default='',
+                        help='Full path to vocoder model checkpoint file')
     parser.add_argument('-s', '--sigma-infer', default=0.9, type=float,
                         help='WaveGlow sigma')
     parser.add_argument('-d', '--denoising-strength', default=0.01, type=float,
                         help='WaveGlow denoising')
+    parser.add_argument('--hifigan-config', type=str, default='',
+                        help='Path to HiFi-GAN config file')
     parser.add_argument('-sr', '--sampling-rate', default=22050, type=int,
                         help='Sampling rate')
     parser.add_argument('--stft-hop-length', type=int, default=256,
@@ -93,7 +97,7 @@ def parse_args(parser):
                         help='Apply TorchScript')
     parser.add_argument('--ema', action='store_true',
                         help='Use EMA averaged model (if saved in checkpoints)')
-    parser.add_argument('--dataset-path', type=str,
+    parser.add_argument('--dataset-path', type=str, default='',
                         help='Path to dataset (for loading extra data fields)')
     parser.add_argument('--speaker', type=int, default=0,
                         help='Speaker ID for a multi-speaker model')
@@ -150,6 +154,9 @@ def load_model_from_ckpt(checkpoint_path, ema, model):
         if any(key.startswith('module.') for key in sd):
             sd = {k.replace('module.', ''): v for k,v in sd.items()}
         status += ' ' + str(model.load_state_dict(sd, strict=False))
+    elif 'generator' in checkpoint_data:
+        # HiFi-GAN checkpoint
+        model.load_state_dict(checkpoint_data['generator'])
     else:
         model = checkpoint_data['model']
     print(f'Loaded {checkpoint_path}{status}')
@@ -176,8 +183,9 @@ def load_and_setup_model(model_name, parser, checkpoint, amp, device,
     if model_name == "WaveGlow":
         for k, m in model.named_modules():
             m._non_persistent_buffers_set = set()  # pytorch 1.6.0 compatability
-
         model = model.remove_weightnorm(model)
+    elif model_name == "HiFi-GAN":
+        model.remove_weight_norm()
 
     if amp:
         model.half()
@@ -336,16 +344,17 @@ def main():
     else:
         generator = None
 
-    if args.waveglow:
+    if args.vocoder:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            waveglow = load_and_setup_model(
-                'WaveGlow', parser, args.waveglow, args.amp, device,
+            vocoder = load_and_setup_model(
+                args.vocoder, parser, args.vocoder_checkpoint, args.amp, device,
                 unk_args=unk_args, forward_is_infer=True, ema=args.ema)
-        denoiser = Denoiser(waveglow).to(device)
-        waveglow = getattr(waveglow, 'infer', waveglow)
+        if args.vocoder == 'WaveGlow':
+            denoiser = Denoiser(vocoder).to(device)
+            vocoder = getattr(vocoder, 'infer', vocoder)
     else:
-        waveglow = None
+        vocoder = None
 
     if len(unk_args) > 0:
         raise ValueError(f'Invalid options {unk_args}')
@@ -362,12 +371,15 @@ def main():
             if generator is not None:
                 b = batches[0]
                 mel, *_ = generator(b['text'])
-            if waveglow is not None:
-                audios = waveglow(mel, sigma=args.sigma_infer).float()
-                _ = denoiser(audios, strength=args.denoising_strength)
+            if vocoder is not None:
+                if args.vocoder == 'WaveGlow':
+                    audios = vocoder(mel, sigma=args.sigma_infer).float()
+                    _ = denoiser(audios, strength=args.denoising_strength)
+                elif args.vocoder == 'HiFi-GAN':
+                    audios = vocoder(mel)
 
     gen_measures = MeasureTime(cuda=args.cuda)
-    waveglow_measures = MeasureTime(cuda=args.cuda)
+    vocoder_measures = MeasureTime(cuda=args.cuda)
 
     gen_kw = {'pace': args.pace,
               'speaker': args.speaker,
@@ -415,20 +427,24 @@ def main():
                         mel_path = os.path.join(args.output, fname)
                         torch.save(_mel, mel_path)
 
-            if waveglow is not None:
-                with torch.no_grad(), waveglow_measures:
-                    audios = waveglow(mel, sigma=args.sigma_infer)
-                    audios = denoiser(audios.float(),
-                                      strength=args.denoising_strength
-                                      ).squeeze(1)
+            if vocoder is not None:
+                with torch.no_grad(), vocoder_measures:
+                    if args.vocoder == 'WaveGlow':
+                        audios = vocoder(mel, sigma=args.sigma_infer)
+                        audios = denoiser(audios.float(),
+                                          strength=args.denoising_strength
+                                          ).squeeze(1)
+                    elif args.vocoder == 'HiFi-GAN':
+                        audios = vocoder(mel)
+                        audios = audios.squeeze()
 
                 all_utterances += len(audios)
                 all_samples += sum(audio.size(0) for audio in audios)
-                waveglow_infer_perf = (
-                    audios.size(0) * audios.size(1) / waveglow_measures[-1])
+                vocoder_infer_perf = (
+                    audios.size(0) * audios.size(1) / vocoder_measures[-1])
 
-                log(rep, {"waveglow_samples/s": waveglow_infer_perf})
-                log(rep, {"waveglow_latency": waveglow_measures[-1]})
+                log(rep, {"vocoder_samples/s": vocoder_infer_perf})
+                log(rep, {"vocoder_latency": vocoder_measures[-1]})
 
                 if args.output is not None and reps == 1:
                     for i, audio in enumerate(audios):
@@ -444,8 +460,8 @@ def main():
                         audio_path = os.path.join(args.output, fname)
                         write(audio_path, args.sampling_rate, audio.cpu().numpy())
 
-            if generator is not None and waveglow is not None:
-                log(rep, {"latency": (gen_measures[-1] + waveglow_measures[-1])})
+            if generator is not None and vocoder is not None:
+                log(rep, {"latency": (gen_measures[-1] + vocoder_measures[-1])})
 
     log_enabled = True
     if generator is not None:
@@ -458,16 +474,16 @@ def main():
         log((), {"90%_fastpitch_latency": gm.mean() + norm.ppf((1.0 + 0.90) / 2) * gm.std()})
         log((), {"95%_fastpitch_latency": gm.mean() + norm.ppf((1.0 + 0.95) / 2) * gm.std()})
         log((), {"99%_fastpitch_latency": gm.mean() + norm.ppf((1.0 + 0.99) / 2) * gm.std()})
-    if waveglow is not None:
-        wm = np.sort(np.asarray(waveglow_measures))
+    if vocoder is not None:
+        wm = np.sort(np.asarray(vocoder_measures))
         rtf = all_samples / (all_utterances * wm.mean() * args.sampling_rate)
-        log((), {"avg_waveglow_samples/s": all_samples / wm.sum()})
-        log((), {"avg_waveglow_latency": wm.mean()})
-        log((), {"avg_waveglow_RTF": rtf})
-        log((), {"90%_waveglow_latency": wm.mean() + norm.ppf((1.0 + 0.90) / 2) * wm.std()})
-        log((), {"95%_waveglow_latency": wm.mean() + norm.ppf((1.0 + 0.95) / 2) * wm.std()})
-        log((), {"99%_waveglow_latency": wm.mean() + norm.ppf((1.0 + 0.99) / 2) * wm.std()})
-    if generator is not None and waveglow is not None:
+        log((), {"avg_vocoder_samples/s": all_samples / wm.sum()})
+        log((), {"avg_vocoder_latency": wm.mean()})
+        log((), {"avg_vocoder_RTF": rtf})
+        log((), {"90%_vocoder_latency": wm.mean() + norm.ppf((1.0 + 0.90) / 2) * wm.std()})
+        log((), {"95%_vocoder_latency": wm.mean() + norm.ppf((1.0 + 0.95) / 2) * wm.std()})
+        log((), {"99%_vocoder_latency": wm.mean() + norm.ppf((1.0 + 0.99) / 2) * wm.std()})
+    if generator is not None and vocoder is not None:
         m = gm + wm
         rtf = all_samples / (all_utterances * m.mean() * args.sampling_rate)
         log((), {"avg_samples/s": all_samples / m.sum()})
