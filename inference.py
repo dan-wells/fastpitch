@@ -77,8 +77,6 @@ def parse_args(parser):
                         help='WaveGlow sigma')
     parser.add_argument('-d', '--denoising-strength', default=0.01, type=float,
                         help='WaveGlow denoising')
-    parser.add_argument('--wn-channels', default=256, type=int,
-                        help='WaveGlow, number of channels in WaveNet layers')
     parser.add_argument('-sr', '--sampling-rate', default=22050, type=int,
                         help='Sampling rate')
     parser.add_argument('--stft-hop-length', type=int, default=256,
