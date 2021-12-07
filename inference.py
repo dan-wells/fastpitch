@@ -31,7 +31,6 @@ import os
 import time
 import sys
 import warnings
-from pathlib import Path
 from tqdm import tqdm
 
 import torch
@@ -221,20 +220,20 @@ def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners
     if load_mels:
         assert 'mel' in fields
         fields['mel'] = [
-            torch.load(Path(dataset, fields['mel'][i])).t() for i in order]
+            torch.load(os.path.join(dataset, fields['mel'][i])).t() for i in order]
         fields['mel_lens'] = torch.LongTensor([t.size(0) for t in fields['mel']])
 
     if load_pitch:
         assert 'pitch' in fields
         fields['pitch'] = [
-            torch.load(Path(dataset, fields['pitch'][i])) for i in order]
+            torch.load(os.path.join(dataset, fields['pitch'][i])) for i in order]
         fields['pitch_lens'] = torch.LongTensor([t.size(0) for t in fields['pitch']])
 
     if load_duration:
         assert 'duration' in fields
         fields['duration'] = [
-            torch.load(Path(dataset, fields['duration'][i])) for i in order]
 
+            torch.load(os.path.join(dataset, fields['duration'][i])) for i in order]
     if 'output' in fields:
         fields['output'] = [fields['output'][i] for i in order]
 
@@ -314,9 +313,9 @@ def main():
     torch.backends.cudnn.benchmark = args.cudnn_benchmark
 
     if args.output is not None:
-        Path(args.output).mkdir(parents=True, exist_ok=True)
+        os.makedirs(args.output, exist_ok=True)
 
-    log_fpath = args.log_file or str(Path(args.output, 'nvlog_infer.json'))
+    log_fpath = args.log_file or os.path.join(args.output, 'nvlog_infer.json')
     log_fpath = unique_log_fpath(log_fpath)
     DLLogger.init(backends=[JSONStreamBackend(Verbosity.DEFAULT, log_fpath),
                             StdOutBackend(Verbosity.VERBOSE,
@@ -413,7 +412,7 @@ def main():
                             fname = os.path.splitext(b['output'][i])[0] + '.pt'
                         else:
                             fname = f'mel_{(n * args.batch_size) + i}.pt'
-                        mel_path = Path(args.output, fname)
+                        mel_path = os.path.join(args.output, fname)
                         torch.save(_mel, mel_path)
 
             if waveglow is not None:
@@ -442,7 +441,7 @@ def main():
 
                         audio = audio / torch.max(torch.abs(audio))
                         fname = b['output'][i] if 'output' in b else f'audio_{(n * args.batch_size) + i}.wav'
-                        audio_path = Path(args.output, fname)
+                        audio_path = os.path.join(args.output, fname)
                         write(audio_path, args.sampling_rate, audio.cpu().numpy())
 
             if generator is not None and waveglow is not None:

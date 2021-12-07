@@ -27,8 +27,8 @@
 
 import argparse
 import json
+import os
 import time
-from pathlib import Path
 
 import parselmouth
 import tgt
@@ -279,15 +279,15 @@ def main():
     for datum in ('mels', 'mels_teacher', 'attentions', 'durations',
                   'pitch_mel', 'pitch_char', 'pitch_trichar'):
         if getattr(args, f'extract_{datum}'):
-            Path(args.dataset_path, datum).mkdir(parents=False, exist_ok=True)
+            os.makedirs(os.path.join(args.dataset_path, datum), exist_ok=True)
         if getattr(args, 'extract_durs_from_textgrids'):
-            Path(args.dataset_path, 'durations').mkdir(parents=False, exist_ok=True)
+            os.makedirs(os.path.join(args.dataset_path, 'durations'), exist_ok=True)
         if getattr(args, 'extract_durs_from_unit_sequences'):
-            Path(args.dataset_path, 'durations').mkdir(parents=False, exist_ok=True)
+            os.makedirs(os.path.join(args.dataset_path, 'durations'), exist_ok=True)
         if getattr(args, 'output_meta_file'):
             metadata = {}
 
-    filenames = [Path(l.split('|')[0]).stem
+    filenames = [os.path.splitext(os.path.basename(l.split('|')[0]))[0]
                  for l in open(args.wav_text_filelist, 'r')]
     # Compatibility with Tacotron2 Data loader
     args.n_speakers = 1
@@ -305,7 +305,7 @@ def main():
         texts_padded, text_lens, mels_padded, _, mel_lens = x
 
         for j, mel in enumerate(mels_padded):
-            fpath = Path(args.dataset_path, 'mels', fnames[j] + '.pt')
+            fpath = os.path.join(args.dataset_path, 'mels', fnames[j] + '.pt')
             torch.save(mel[:, :mel_lens[j]].cpu(), fpath)
 
         if args.extract_mels_teacher or args.extract_durations or args.extract_attentions:
@@ -314,12 +314,12 @@ def main():
 
         if args.extract_mels_teacher:
             for j, mel in enumerate(out_mels_postnet):
-                fpath = Path(args.dataset_path, 'mels_teacher', fnames[j] + '.pt')
+                fpath = os.path.join(args.dataset_path, 'mels_teacher', fnames[j] + '.pt')
                 torch.save(mel[:, :mel_lens[j]].cpu(), fpath)
         if args.extract_attentions:
             for j, ali in enumerate(alignments):
                 ali = ali[:mel_lens[j],:text_lens[j]]
-                fpath = Path(args.dataset_path, 'attentions', fnames[j] + '.pt')
+                fpath = os.path.join(args.dataset_path, 'attentions', fnames[j] + '.pt')
                 torch.save(ali.cpu(), fpath)
         if args.extract_durations:
             durations = []
@@ -329,7 +329,7 @@ def main():
                 dur = torch.histc(torch.argmax(ali, dim=1), min=0,
                                   max=text_len-1, bins=text_len)
                 durations.append(dur)
-                fpath = Path(args.dataset_path, 'durations', fnames[j] + '.pt')
+                fpath = os.path.join(args.dataset_path, 'durations', fnames[j] + '.pt')
                 torch.save(dur.cpu().int(), fpath)
         if args.extract_durs_from_textgrids:
             texts = []
@@ -339,7 +339,7 @@ def main():
             for j, mel_len in enumerate(mel_lens):
                 # TODO: Something better than forcing consistent filepaths between
                 # wavs and TextGrids
-                tg_path = Path(args.dataset_path, 'TextGrid', fnames[j] + '.TextGrid')
+                tg_path = os.path.join(args.dataset_path, 'TextGrid', fnames[j] + '.TextGrid')
                 try:
                     textgrid = tgt.io.read_textgrid(tg_path, include_empty_intervals=True)
                 except FileNotFoundError:
@@ -354,7 +354,7 @@ def main():
                 assert sum(durs) == mel_len, f'Length mismatch: {fnames[j]}, {sum(durs)} != {mel_len}'
                 dur = torch.LongTensor(durs)
                 durations.append(dur)
-                fpath = Path(args.dataset_path, 'durations', fnames[j] + '.pt')
+                fpath = os.path.join(args.dataset_path, 'durations', fnames[j] + '.pt')
                 torch.save(dur.cpu().int(), fpath)
                 # TODO: likely always to be using TextGrid alignments, but should
                 # account for texts in other scenarios just in case
@@ -381,14 +381,14 @@ def main():
                 assert sum(durs) == mel_len, f'Length mismatch: {fnames[j]}, {sum(durs)} != {mel_len}'
                 dur = torch.LongTensor(durs)
                 durations.append(dur)
-                fpath = Path(args.dataset_path, 'durations', fnames[j] + '.pt')
+                fpath = os.path.join(args.dataset_path, 'durations', fnames[j] + '.pt')
                 torch.save(dur.cpu().int(), fpath)
                 if args.output_meta_file is not None:
                     metadata[fnames[j]] = [str(i) for i in units]
         if args.extract_pitch_mel or args.extract_pitch_char or args.extract_pitch_trichar:
             for j, dur in enumerate(durations):
-                fpath = Path(args.dataset_path, 'pitch_char', fnames[j] + '.pt')
-                wav = Path(args.dataset_path, 'wavs', fnames[j] + '.wav')
+                fpath = os.path.join(args.dataset_path, 'pitch_char', fnames[j] + '.pt')
+                wav = os.path.join(args.dataset_path, 'wavs', fnames[j] + '.wav')
                 if args.trim_silence is not None:
                     p_mel, p_char, p_trichar = calculate_pitch(str(wav), dur.cpu().numpy(),
                                                                start_times[j], end_times[j])
@@ -444,8 +444,8 @@ def main():
                     "{}: Trimming led to mismatched durations ({}) and pitches ({})".format(
                         fnames[j], len(dur), len(pitch))
                 # save mels and durs again (sorry). pitches saved below
-                torch.save(mel, Path(args.dataset_path, 'mels', fnames[j] + '.pt'))
-                torch.save(dur, Path(args.dataset_path, 'durations', fnames[j] + '.pt'))
+                torch.save(mel, os.path.join(args.dataset_path, 'mels', fnames[j] + '.pt'))
+                torch.save(dur, os.path.join(args.dataset_path, 'durations', fnames[j] + '.pt'))
 
         nseconds = time.time() - tik
         DLLogger.log(step=f'{i+1}/{len(data_loader)} ({nseconds:.2f}s)', data={})
@@ -453,13 +453,13 @@ def main():
     if args.extract_pitch_mel:
         normalize_pitch_vectors(pitch_vecs['mel'])
         for fname, pitch in pitch_vecs['mel'].items():
-            fpath = Path(args.dataset_path, 'pitch_mel', fname + '.pt')
+            fpath = os.path.join(args.dataset_path, 'pitch_mel', fname + '.pt')
             torch.save(torch.from_numpy(pitch), fpath)
 
     if args.extract_pitch_char:
         mean, std = normalize_pitch_vectors(pitch_vecs['char'])
         for fname, pitch in pitch_vecs['char'].items():
-            fpath = Path(args.dataset_path, 'pitch_char', fname + '.pt')
+            fpath = os.path.join(args.dataset_path, 'pitch_char', fname + '.pt')
             torch.save(torch.from_numpy(pitch), fpath)
         save_stats(args.dataset_path, args.wav_text_filelist, 'pitch_char',
                    mean, std)
@@ -467,7 +467,7 @@ def main():
     if args.extract_pitch_trichar:
         normalize_pitch_vectors(pitch_vecs['trichar'])
         for fname, pitch in pitch_vecs['trichar'].items():
-            fpath = Path(args.dataset_path, 'pitch_trichar', fname + '.pt')
+            fpath = os.path.join(args.dataset_path, 'pitch_trichar', fname + '.pt')
             torch.save(torch.from_numpy(pitch), fpath)
 
     # TODO: only handling mels, durations, pitch_char and texts for now

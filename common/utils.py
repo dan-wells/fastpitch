@@ -25,7 +25,7 @@
 #
 # *****************************************************************************
 
-from pathlib import Path
+import os
 from typing import Optional
 
 import librosa
@@ -59,7 +59,7 @@ def load_filepaths_and_text(dataset_path, fnames, has_speakers=False, split="|")
             paths, non_paths = parts[:-2], parts[-2:]
         else:
             paths, non_paths = parts[:-1], parts[-1:]
-        return tuple(str(Path(root, p)) for p in paths) + tuple(non_paths)
+        return tuple(os.path.join(root, p) for p in paths) + tuple(non_paths)
 
     fpaths_and_text = []
     for fname in fnames:
@@ -69,8 +69,8 @@ def load_filepaths_and_text(dataset_path, fnames, has_speakers=False, split="|")
 
 
 def stats_filename(dataset_path, filelist_path, feature_name):
-    stem = Path(filelist_path).stem
-    return Path(dataset_path, f'{feature_name}_stats__{stem}.json')
+    stem = os.path.splitext(os.path.basename(filelist_path))[0]
+    return os.path.join(dataset_path, f'{feature_name}_stats__{stem}.json')
 
 
 def to_gpu(x):
