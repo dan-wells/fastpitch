@@ -245,6 +245,8 @@ def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners
         fields['speaker'] = torch.LongTensor([int(fields['speaker'][i]) for i in order])
     if 'output' in fields:
         fields['output'] = [fields['output'][i] for i in order]
+    if 'mel_output' in fields:
+        fields['mel_output'] = [fields['mel_output'][i] for i in order]
 
     # cut into batches & pad
     batches = []
@@ -428,7 +430,7 @@ def main():
                         else:
                             fname = f'mel_{(n * args.batch_size) + i}.pt'
                         mel_path = os.path.join(args.output, fname)
-                        torch.save(_mel, mel_path)
+                        torch.save(_mel.cpu(), mel_path)
 
             if vocoder is not None:
                 with torch.no_grad(), vocoder_measures:
