@@ -370,17 +370,18 @@ def main():
         load_speaker=('speaker' in fields))
 
     # Use real data rather than synthetic - FastPitch predicts len
-    for _ in tqdm(range(args.warmup_steps), 'Warmup'):
-        with torch.no_grad():
-            if generator is not None:
-                b = batches[0]
-                mel, *_ = generator(b['text'])
-            if vocoder is not None:
-                if args.vocoder == 'WaveGlow':
-                    audios = vocoder(mel, sigma=args.sigma_infer).float()
-                    _ = denoiser(audios, strength=args.denoising_strength)
-                elif args.vocoder == 'HiFi-GAN':
-                    audios = vocoder(mel)
+    if args.warmup_steps:
+        for _ in tqdm(range(args.warmup_steps), 'Warmup'):
+            with torch.no_grad():
+                if generator is not None:
+                    b = batches[0]
+                    mel, *_ = generator(b['text'])
+                if vocoder is not None:
+                    if args.vocoder == 'WaveGlow':
+                        audios = vocoder(mel, sigma=args.sigma_infer).float()
+                        _ = denoiser(audios, strength=args.denoising_strength)
+                    elif args.vocoder == 'HiFi-GAN':
+                        audios = vocoder(mel)
 
     gen_measures = MeasureTime(cuda=args.cuda)
     vocoder_measures = MeasureTime(cuda=args.cuda)
