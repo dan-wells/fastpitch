@@ -217,10 +217,10 @@ def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners
 
     if input_type == 'pf':
         fields['text'] = [torch.FloatTensor(tp.encode_text(text))
-                          for text in fields['text']]
+                          for text in tqdm(fields['text'], "Loading texts")]
     else:
         fields['text'] = [torch.LongTensor(tp.encode_text(text))
-                          for text in fields['text']]
+                          for text in tqdm(fields['text'], "Loading texts")]
     order = np.argsort([-t.size(0) for t in fields['text']])
 
     fields['text'] = [fields['text'][i] for i in order]
@@ -229,17 +229,20 @@ def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners
     if load_mels:
         assert 'mel' in fields
         fields['mel'] = [
-            torch.load(os.path.join(dataset, fields['mel'][i])).t() for i in order]
+            torch.load(os.path.join(dataset, fields['mel'][i])).t()
+            for i in tqdm(order, "Loading mels")]
         fields['mel_lens'] = torch.LongTensor([t.size(0) for t in fields['mel']])
     if load_pitch:
         assert 'pitch' in fields
         fields['pitch'] = [
-            torch.load(os.path.join(dataset, fields['pitch'][i])) for i in order]
+            torch.load(os.path.join(dataset, fields['pitch'][i])).float()
+            for i in tqdm(order, "Loading pitches")]
         fields['pitch_lens'] = torch.LongTensor([t.size(0) for t in fields['pitch']])
     if load_duration:
         assert 'duration' in fields
         fields['duration'] = [
-            torch.load(os.path.join(dataset, fields['duration'][i])) for i in order]
+            torch.load(os.path.join(dataset, fields['duration'][i]))
+            for i in tqdm(order, "Loading durations")]
     if load_speaker:
         assert 'speaker' in fields
         fields['speaker'] = torch.LongTensor([int(fields['speaker'][i]) for i in order])
@@ -404,9 +407,8 @@ def main():
     log = lambda s, d: DLLogger.log(step=s, data=d) if log_enabled else None
 
     for rep in (tqdm(range(reps), 'Inference') if reps > 1 else range(reps)):
-        for n, b in enumerate(batches):
+        for n, b in enumerate(tqdm(batches, "Synthesizing utterances")):
             if generator is None:
-                log(rep, {'Synthesizing from ground truth mels'})
                 mel, mel_lens = b['mel'], b['mel_lens']
             else:
                 gen_kw['dur_tgt'] = b['duration'] if 'duration' in b else None
@@ -418,8 +420,6 @@ def main():
                 gen_infer_perf = mel.size(0) * mel.size(2) / gen_measures[-1]
                 all_letters += b['text_lens'].sum().item()
                 all_frames += mel.size(0) * mel.size(2)
-                log(rep, {"fastpitch_frames/s": gen_infer_perf})
-                log(rep, {"fastpitch_latency": gen_measures[-1]})
 
                 if args.save_mels and args.output is not None and reps == 1:
                     for i, _mel in enumerate(mel):
@@ -449,8 +449,6 @@ def main():
                 vocoder_infer_perf = (
                     audios.size(0) * audios.size(1) / vocoder_measures[-1])
 
-                log(rep, {"vocoder_samples/s": vocoder_infer_perf})
-                log(rep, {"vocoder_latency": vocoder_measures[-1]})
 
                 if args.output is not None and reps == 1:
                     for i, audio in enumerate(audios):
@@ -466,8 +464,6 @@ def main():
                         audio_path = os.path.join(args.output, fname)
                         write(audio_path, args.sampling_rate, audio.cpu().numpy())
 
-            if generator is not None and vocoder is not None:
-                log(rep, {"latency": (gen_measures[-1] + vocoder_measures[-1])})
 
     log_enabled = True
     if generator is not None:
