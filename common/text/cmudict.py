@@ -3,7 +3,7 @@
 import re
 
 
-valid_symbols = [
+arpabet_symbols = [
   'AA', 'AA0', 'AA1', 'AA2', 'AE', 'AE0', 'AE1', 'AE2', 'AH', 'AH0', 'AH1', 'AH2',
   'AO', 'AO0', 'AO1', 'AO2', 'AW', 'AW0', 'AW1', 'AW2', 'AY', 'AY0', 'AY1', 'AY2',
   'B', 'CH', 'D', 'DH', 'EH', 'EH0', 'EH1', 'EH2', 'ER', 'ER0', 'ER1', 'ER2', 'EY',
@@ -13,7 +13,7 @@ valid_symbols = [
   'UW0', 'UW1', 'UW2', 'V', 'W', 'Y', 'Z', 'ZH'
 ]
 
-_valid_symbol_set = set(valid_symbols)
+_arpabet_symbol_set = set(arpabet_symbols)
 
 
 def lines_to_list(filename):
@@ -88,6 +88,6 @@ def _parse_cmudict(file):
 def _get_pronunciation(s):
   parts = s.strip().split(' ')
   for part in parts:
-    if part not in _valid_symbol_set:
+    if part not in _arpabet_symbol_set:
       return None
   return ' '.join(parts)

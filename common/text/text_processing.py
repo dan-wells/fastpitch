@@ -62,7 +62,7 @@ class PhoneProcessing(object):
                     feats.extend(pf_vecs)
             return feats
         else:
-            if self.symbol_set in ['xsampa', 'combilex']:
+            if self.symbol_set in ['xsampa', 'combilex', 'arpabet']:
                 # Assuming space-delimited phone strings, e.g. 'sp D @ k { t sp'
                 return [self.symbol_to_id[s] for s in text.split(' ')]
             # TODO: could also handle X-SAMPA this way if mapping through IPA

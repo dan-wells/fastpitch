@@ -11,11 +11,11 @@ _characters. See TRAINING_DATA.md for details.
 from panphon import FeatureTable
 from panphon.permissive import PermissiveFeatureTable
 
-from .cmudict import valid_symbols
+from .cmudict import arpabet_symbols
 
 
 # Prepend "@" to ARPAbet symbols to ensure uniqueness (some are the same as uppercase letters):
-_arpabet = ['@' + s for s in valid_symbols]
+_arpabet = ['@' + s for s in arpabet_symbols]
 
 
 def get_symbols(symbol_set='english_basic', symbol_type=None):
@@ -86,6 +86,12 @@ def get_symbols(symbol_set='english_basic', symbol_type=None):
             'a', 'b', 'd', 'dZ', 'e', 'e~', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'l=',
             'm', 'm=', 'n', 'n=', 'o~', 'p', 'r', 's', 't', 'tS', 'u', 'v', 'w', 'z'
         ]
+        symbols = _pad + _silence + _oov + _phones
+    elif symbol_set == 'arpabet':
+        _pad = ['_']
+        _silence = ['sil', 'sp']
+        _oov = ['spn']
+        _phones = arpabet_symbols
         symbols = _pad + _silence + _oov + _phones
     else:
         raise Exception("{} symbol set does not exist".format(symbol_set))
