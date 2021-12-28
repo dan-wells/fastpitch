@@ -88,7 +88,7 @@ def parse_args(parser):
     optimization = parser.add_argument_group('optimization setup')
     optimization.add_argument('--optimizer', type=str, default='lamb',
                               choices=['adam', 'lamb'], help='Optimization algorithm')
-    optimization.add_argument('-lr', '--learning-rate', type=float, required=True,
+    optimization.add_argument('-lr', '--learning-rate', default=0.1, type=float,
                               help='Learning rate')
     optimization.add_argument('--weight-decay', default=1e-6, type=float,
                               help='Weight decay')
@@ -99,9 +99,9 @@ def parse_args(parser):
     optimization.add_argument('--warmup-steps', type=int, default=1000,
                               help='Number of steps for lr warmup')
     optimization.add_argument('--dur-predictor-loss-scale', type=float,
-                              default=1.0, help='Rescale duration predictor loss')
+                              default=0.1, help='Rescale duration predictor loss')
     optimization.add_argument('--pitch-predictor-loss-scale', type=float,
-                              default=1.0, help='Rescale pitch predictor loss')
+                              default=0.1, help='Rescale pitch predictor loss')
 
     dataset = parser.add_argument_group('dataset parameters')
     dataset.add_argument('--training-files', type=str, nargs='*', required=True,
