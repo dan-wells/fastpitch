@@ -39,7 +39,6 @@ from dllogger import StdOutBackend, JSONStreamBackend, Verbosity
 from torch.utils.data import DataLoader
 
 from common import utils
-from inference import load_and_setup_model
 from tacotron2.data_function import TextMelLoader, TextMelCollate, batch_to_gpu
 from common.text.text_processing import TextProcessing, PhoneProcessing, UnitProcessing
 
@@ -48,12 +47,9 @@ def parse_args(parser):
     """
     Parse commandline arguments.
     """
-    parser.add_argument('--tacotron2-checkpoint', type=str,
-                        help='full path to the generator checkpoint file')
     parser.add_argument('-b', '--batch-size', default=32, type=int)
     parser.add_argument('--log-file', type=str, default='nvlog.json',
                         help='Filename for logging')
-    # Mel extraction
     parser.add_argument('-d', '--dataset-path', type=str,
                         default='./', help='Path to dataset')
     parser.add_argument('--wav-text-filelist', required=True,
@@ -87,33 +83,13 @@ def parse_args(parser):
                         help='Minimum mel frequency')
     parser.add_argument('--mel-fmax', default=8000.0, type=float,
                         help='Maximum mel frequency')
-    # Duration extraction
-    parser.add_argument('--extract-mels', action='store_true',
-                        help='Calculate spectrograms from .wav files')
-    parser.add_argument('--extract-mels-teacher', action='store_true',
-                        help='Extract Taco-generated mel-spectrograms for KD')
-    parser.add_argument('--extract-durations', action='store_true',
-                        help='Extract char durations from Tacotron2 attention matrices')
-    parser.add_argument('--extract-attentions', action='store_true',
-                        help='Extract full attention matrices from Tacotron2')
-    parser.add_argument('--extract-pitch-mel', action='store_true',
-                        help='Extract pitch')
-    parser.add_argument('--extract-pitch-char', action='store_true',
-                        help='Extract pitch averaged over input characters')
-    parser.add_argument('--extract-pitch-trichar', action='store_true',
-                        help='Extract pitch averaged over input characters')
-    parser.add_argument('--extract-durs-from-textgrids', action='store_true',
-                        help='Extract phone durations from Praat TextGrids')
-    parser.add_argument('--extract-durs-from-unit-sequences', action='store_true',
-                        help='Extract unit durations by run-length encoding '
-                        'quantized unit sequences')
-    parser.add_argument('--trim-silence', default=None, type=float,
+    parser.add_argument('--durations-from', type=str, default='',
+                        choices=['textgrid', 'unit_rle'],
+                        help='Extract symbol durations from Praat TextGrids or '
+                        'by run-length encoding quantized unit sequences')
+    parser.add_argument('--trim-silences', default=None, type=float,
                         help='Trim leading and trailing silences from audio using TextGrids. '
                         'Specify desired silence duration to leave (0 to trim completely)')
-    parser.add_argument('--train-mode', action='store_true',
-                        help='Run the model in .train() mode')
-    parser.add_argument('--cuda', action='store_true',
-                        help='Extract mels on a GPU using CUDA')
     return parser
 
 
@@ -144,18 +120,34 @@ def maybe_pad(vec, l):
     return vec
 
 
-def dur_chunk_sizes(n, ary):
-    """Split a single duration into almost-equally-sized chunks
-
-    Examples:
-      dur_chunk(3, 2) --> [2, 1]
-      dur_chunk(3, 3) --> [1, 1, 1]
-      dur_chunk(5, 3) --> [2, 2, 1]
-    """
-    ret = np.ones((ary,), dtype=np.int32) * (n // ary)
-    ret[:n % ary] = n // ary + 1
-    assert ret.sum() == n
-    return ret
+def extract_durs_from_textgrids(mel_lens, fnames, dataset_path, sampling_rate, hop_length, metadata):
+    texts = []
+    durations = []
+    start_times = []
+    end_times = []
+    for j, mel_len in enumerate(mel_lens):
+        # TODO: Something better than forcing consistent filepaths between
+        # wavs and TextGrids
+        tg_path = os.path.join(dataset_path, 'TextGrid', fnames[j] + '.TextGrid')
+        try:
+            textgrid = tgt.io.read_textgrid(tg_path, include_empty_intervals=True)
+        except FileNotFoundError:
+            print('Expected consistent filepaths between wavs and TextGrids, e.g.')
+            print('  /path/to/wavs/speaker_uttID.wav -> /path/to/TextGrid/speaker_uttID.TextGrid')
+            raise
+        phones, durs, start, end = parse_textgrid(
+            textgrid.get_tier_by_name('phones'), sampling_rate, hop_length)
+        texts.append(phones)
+        start_times.append(start)
+        end_times.append(end)
+        assert sum(durs) == mel_len, f'Length mismatch: {fnames[j]}, {sum(durs)} != {mel_len}'
+        dur = torch.LongTensor(durs)
+        durations.append(dur)
+        fpath = os.path.join(dataset_path, 'durations', fnames[j] + '.pt')
+        torch.save(dur.cpu().int(), fpath)
+        if metadata is not None:
+            metadata[fnames[j]] = phones
+    return durations, texts, start_times, end_times, metadata
 
 
 def parse_textgrid(tier, sampling_rate, hop_length):
@@ -181,6 +173,34 @@ def parse_textgrid(tier, sampling_rate, hop_length):
     return phones, durations, start_time, end_time
 
 
+def extract_durs_from_unit_sequences(mel_lens, fnames, texts_padded, text_lens, metadata):
+    durations = []
+    for j, mel_len in enumerate(mel_lens):
+        text = texts_padded[j][:text_lens[j]].cpu().numpy()
+        rle_text = run_length_encode(text)
+        units, durs = (list(i) for i in zip(*rle_text))  # unpack list of tuples to two sequences
+        total_dur = sum(durs)
+        if total_dur != mel_len:
+            dur_diff = mel_len - total_dur
+            durs[-1] += dur_diff
+            # TODO: Work out why some utterances are 2 frames short.
+            # Expected for extracted HuBERT feature sequences to be
+            # consistently 1-frame short because they truncate rather than
+            # padding utterances which don't exactly fit into 0.02 s chunks,
+            # but not sure where this extra missing frame comes from
+            if dur_diff != 1:
+                DLLogger.log(step="Feature length mismatch {}: {} mels, {} durs".format(
+                    fnames[j], mel_len, total_dur), data={})
+        assert sum(durs) == mel_len, f'Length mismatch: {fnames[j]}, {sum(durs)} != {mel_len}'
+        dur = torch.LongTensor(durs)
+        durations.append(dur)
+        fpath = os.path.join(dataset_path, 'durations', fnames[j] + '.pt')
+        torch.save(dur.cpu().int(), fpath)
+        if metadata is not None:
+            metadata[fnames[j]] = [str(i) for i in units]
+    return durations, metadata
+
+
 def run_length_encode(symbols):
     run_lengths = []
     dur = 1
@@ -192,6 +212,19 @@ def run_length_encode(symbols):
             dur = 1
     run_lengths.append([u1, dur])
     return run_lengths
+
+
+def extract_pitches(pitch_vecs, durations, fnames, dataset_path, trim_silences,
+                    start_times, end_times):
+    for j, dur in enumerate(durations):
+        fpath = os.path.join(dataset_path, 'pitches', fnames[j] + '.pt')
+        wav = os.path.join(dataset_path, 'wavs', fnames[j] + '.wav')
+        if trim_silences is not None:
+            p_char = calculate_pitch(str(wav), dur.cpu().numpy(), start_times[j], end_times[j])
+        else:
+            p_char = calculate_pitch(str(wav), dur.cpu().numpy())
+        pitch_vecs[fnames[j]] = p_char
+    return pitch_vecs
 
 
 def calculate_pitch(wav, durs, start=None, end=None):
@@ -208,22 +241,9 @@ def calculate_pitch(wav, durs, start=None, end=None):
     for idx, a, b in zip(range(mel_len), durs_cum[:-1], durs_cum[1:]):
         values = pitch[a:b][np.where(pitch[a:b] != 0.0)[0]]
         pitch_char[idx] = np.mean(values) if len(values) > 0 else 0.0
-
-    # Average to three values per character
-    pitch_trichar = np.zeros((3 * durs.shape[0],), dtype=float)
-
-    durs_tri = np.concatenate([dur_chunk_sizes(d, 3) for d in durs])
-    durs_tri_cum = np.cumsum(np.pad(durs_tri, (1, 0)))
-
-    for idx, a, b in zip(range(3 * mel_len), durs_tri_cum[:-1], durs_tri_cum[1:]):
-        values = pitch[a:b][np.where(pitch[a:b] != 0.0)[0]]
-        pitch_trichar[idx] = np.mean(values) if len(values) > 0 else 0.0
-
-    pitch_mel = maybe_pad(pitch, mel_len)
     pitch_char = maybe_pad(pitch_char, len(durs))
-    pitch_trichar = maybe_pad(pitch_trichar, len(durs_tri))
 
-    return pitch_mel, pitch_char, pitch_trichar
+    return pitch_char
 
 
 def normalize_pitch_vectors(pitch_vecs):
@@ -246,6 +266,61 @@ def save_stats(dataset_path, wav_text_filelist, feature_name, mean, std):
         json.dump({'mean': mean, 'std': std}, f, indent=4)
 
 
+def trim_silences(keep_sil_frames, sampling_rate, hop_length, fnames, dataset_path,
+                  mel_lens, mels_padded, durations, pitch_vecs, texts, metadata):
+    if keep_sil_frames > 0:
+        keep_sil_frames = np.round(keep_sil_frames * sampling_rate / hop_length)
+    keep_sil_frames = int(keep_sil_frames)
+    for j, text in enumerate(texts):
+        text = np.array(text)
+        sil_idx = np.where(text == 'sil')[0]
+        sil_durs = durations[j][sil_idx]
+        trim_durs = np.array(
+            [d - keep_sil_frames if d > keep_sil_frames else 0 for d in sil_durs],
+            dtype=np.int64)
+        if trim_durs.size == 2:
+            # trim both sides
+            trim_start, trim_end = trim_durs
+            trim_end = -trim_end
+        elif trim_durs.size == 0:
+            # nothing to trim
+            trim_start, trim_end = None, None
+        elif sil_idx[0] == 0:
+            # trim only leading silence
+            trim_start, trim_end = trim_durs[0], None
+        elif sil_idx[0] == len(text) - 1:
+            # trim only trailing silence
+            trim_start, trim_end = None, -trim_durs[0]
+        if trim_end == 0:
+            # don't trim trailing silence if already short enough
+            trim_end = None
+        if keep_sil_frames == 0:
+            sil_mask = text != "sil"
+        else:
+            sil_mask = np.ones_like(text, dtype=bool)
+        text = text[sil_mask]
+        if metadata is not None:
+            metadata[fnames[j]] = text
+        mel = mels_padded[j][:, :mel_lens[j]].cpu()
+        mel = mel[:, trim_start:trim_end]
+        dur = durations[j]
+        dur = dur.put(torch.tensor(sil_idx), sil_durs - trim_durs)
+        dur = dur[sil_mask]
+        assert mel.shape[1] == sum(dur), \
+            "{}: Trimming led to mismatched durations ({}) and mels ({})".format(
+                fnames[j], sum(dur), mel.shape[1])
+        pitch = pitch_vecs[fnames[j]]
+        pitch = pitch[sil_mask]
+        pitch_vecs[fnames[j]] = pitch
+        assert len(pitch) == len(dur), \
+            "{}: Trimming led to mismatched durations ({}) and pitches ({})".format(
+                fnames[j], len(dur), len(pitch))
+        # save mels and durs again (sorry)
+        torch.save(mel, os.path.join(dataset_path, 'mels', fnames[j] + '.pt'))
+        torch.save(dur, os.path.join(dataset_path, 'durations', fnames[j] + '.pt'))
+    return pitch_vecs, metadata
+
+
 def main():
     parser = argparse.ArgumentParser(description='PyTorch TTS Data Pre-processing')
     parser = parse_args(parser)
@@ -253,39 +328,23 @@ def main():
     if len(unk_args) > 0:
         raise ValueError(f'Invalid options {unk_args}')
 
-    if args.extract_pitch_char:
-        assert (args.extract_durations or
-                args.extract_durs_from_textgrids or
-                args.extract_durs_from_unit_sequences), \
-            "Durations required for pitch extraction"
+    if args.trim_silences is not None:
+        assert args.durations_from == 'textgrid', \
+            "Can only trim silences based on TextGrid alignments"
 
     DLLogger.init(backends=[JSONStreamBackend(Verbosity.DEFAULT, args.log_file),
                             StdOutBackend(Verbosity.VERBOSE)])
     for k,v in vars(args).items():
         DLLogger.log(step="PARAMETER", data={k:v})
 
-    if args.extract_mels_teacher or args.extract_durations or args.extract_attentions:
-        model = load_and_setup_model(
-            'Tacotron2', parser, args.tacotron2_checkpoint, amp=False,
-            device=torch.device('cuda' if args.cuda else 'cpu'),
-            forward_is_infer=False, ema=False)
+    for datum in ('mels', 'durations', 'pitches'):
+        os.makedirs(os.path.join(args.dataset_path, datum), exist_ok=True)
 
-        if args.train_mode:
-            model.train()
-
-        # n_mel_channels arg has been consumed by model's arg parser
-        args.n_mel_channels = model.n_mel_channels
-
-    for datum in ('mels', 'mels_teacher', 'attentions', 'durations',
-                  'pitch_mel', 'pitch_char', 'pitch_trichar'):
-        if getattr(args, f'extract_{datum}'):
-            os.makedirs(os.path.join(args.dataset_path, datum), exist_ok=True)
-        if getattr(args, 'extract_durs_from_textgrids'):
-            os.makedirs(os.path.join(args.dataset_path, 'durations'), exist_ok=True)
-        if getattr(args, 'extract_durs_from_unit_sequences'):
-            os.makedirs(os.path.join(args.dataset_path, 'durations'), exist_ok=True)
-        if getattr(args, 'output_meta_file'):
-            metadata = {}
+    pitch_vecs = {}
+    if args.output_meta_file is None:
+        metadata = None
+    else:
+        metadata = {}
 
     filenames = [os.path.splitext(os.path.basename(l.split('|')[0]))[0]
                  for l in open(args.wav_text_filelist, 'r')]
@@ -297,185 +356,47 @@ def main():
                              sampler=None, num_workers=0,
                              collate_fn=TextMelCollate(1),
                              pin_memory=False, drop_last=False)
-    pitch_vecs = {'mel': {}, 'char': {}, 'trichar': {}}
     for i, batch in enumerate(data_loader):
         tik = time.time()
         fnames = batch[-1]
         x, _, _ = batch_to_gpu(batch[:-1])
         texts_padded, text_lens, mels_padded, _, mel_lens = x
+        start_times, end_times = [], []
 
         for j, mel in enumerate(mels_padded):
             fpath = os.path.join(args.dataset_path, 'mels', fnames[j] + '.pt')
-            torch.save(mel[:, :mel_lens[j]].cpu(), fpath)
+            torch.save(mel[:, :mel_lens[j]].cpu().clone(), fpath)
 
-        if args.extract_mels_teacher or args.extract_durations or args.extract_attentions:
-            with torch.no_grad():
-                out_mels, out_mels_postnet, _, alignments = model.forward(x)
+        if args.durations_from == 'textgrid':
+            durations, texts, start_times, end_times, metadata = extract_durs_from_textgrids(
+                mel_lens, fnames, args.dataset_path, args.sampling_rate, args.hop_length,
+                metadata)
+        elif args.durations_from == 'unit_rle':
+            durations, metadata = extract_durs_from_unit_sequences(
+                mel_lens, fnames, texts_padded, text_lens, metadata)
 
-        if args.extract_mels_teacher:
-            for j, mel in enumerate(out_mels_postnet):
-                fpath = os.path.join(args.dataset_path, 'mels_teacher', fnames[j] + '.pt')
-                torch.save(mel[:, :mel_lens[j]].cpu(), fpath)
-        if args.extract_attentions:
-            for j, ali in enumerate(alignments):
-                ali = ali[:mel_lens[j],:text_lens[j]]
-                fpath = os.path.join(args.dataset_path, 'attentions', fnames[j] + '.pt')
-                torch.save(ali.cpu(), fpath)
-        if args.extract_durations:
-            durations = []
-            for j, ali in enumerate(alignments):
-                text_len = text_lens[j]
-                ali = ali[:mel_lens[j],:text_len]
-                dur = torch.histc(torch.argmax(ali, dim=1), min=0,
-                                  max=text_len-1, bins=text_len)
-                durations.append(dur)
-                fpath = os.path.join(args.dataset_path, 'durations', fnames[j] + '.pt')
-                torch.save(dur.cpu().int(), fpath)
-        if args.extract_durs_from_textgrids:
-            texts = []
-            durations = []
-            start_times = []
-            end_times = []
-            for j, mel_len in enumerate(mel_lens):
-                # TODO: Something better than forcing consistent filepaths between
-                # wavs and TextGrids
-                tg_path = os.path.join(args.dataset_path, 'TextGrid', fnames[j] + '.TextGrid')
-                try:
-                    textgrid = tgt.io.read_textgrid(tg_path, include_empty_intervals=True)
-                except FileNotFoundError:
-                    print('Expected consistent filepaths between wavs and TextGrids, e.g.')
-                    print('  /path/to/wavs/speaker_uttID.wav -> /path/to/TextGrid/speaker_uttID.TextGrid')
-                    raise
-                phones, durs, start, end = parse_textgrid(
-                    textgrid.get_tier_by_name('phones'), args.sampling_rate, args.hop_length)
-                texts.append(phones)
-                start_times.append(start)
-                end_times.append(end)
-                assert sum(durs) == mel_len, f'Length mismatch: {fnames[j]}, {sum(durs)} != {mel_len}'
-                dur = torch.LongTensor(durs)
-                durations.append(dur)
-                fpath = os.path.join(args.dataset_path, 'durations', fnames[j] + '.pt')
-                torch.save(dur.cpu().int(), fpath)
-                # TODO: likely always to be using TextGrid alignments, but should
-                # account for texts in other scenarios just in case
-                if args.output_meta_file is not None:
-                    metadata[fnames[j]] = phones
-        if args.extract_durs_from_unit_sequences:
-            durations = []
-            for j, mel_len in enumerate(mel_lens):
-                text = texts_padded[j][:text_lens[j]].cpu().numpy()
-                rle_text = run_length_encode(text)
-                units, durs = (list(i) for i in zip(*rle_text))  # unpack list of tuples to two sequences
-                total_dur = sum(durs)
-                if total_dur != mel_len:
-                    dur_diff = mel_len - total_dur
-                    durs[-1] += dur_diff
-                    # TODO: Work out why some utterances are 2 frames short.
-                    # Expected for extracted HuBERT feature sequences to be
-                    # consistently 1-frame short because they truncate rather than
-                    # padding utterances which don't exactly fit into 0.02 s chunks,
-                    # but not sure where this extra missing frame comes from
-                    if dur_diff != 1:
-                        DLLogger.log(step="Feature length mismatch {}: {} mels, {} durs".format(
-                            fnames[j], mel_len, total_dur), data={})
-                assert sum(durs) == mel_len, f'Length mismatch: {fnames[j]}, {sum(durs)} != {mel_len}'
-                dur = torch.LongTensor(durs)
-                durations.append(dur)
-                fpath = os.path.join(args.dataset_path, 'durations', fnames[j] + '.pt')
-                torch.save(dur.cpu().int(), fpath)
-                if args.output_meta_file is not None:
-                    metadata[fnames[j]] = [str(i) for i in units]
-        if args.extract_pitch_mel or args.extract_pitch_char or args.extract_pitch_trichar:
-            for j, dur in enumerate(durations):
-                fpath = os.path.join(args.dataset_path, 'pitch_char', fnames[j] + '.pt')
-                wav = os.path.join(args.dataset_path, 'wavs', fnames[j] + '.wav')
-                if args.trim_silence is not None:
-                    p_mel, p_char, p_trichar = calculate_pitch(str(wav), dur.cpu().numpy(),
-                                                               start_times[j], end_times[j])
-                else:
-                    p_mel, p_char, p_trichar = calculate_pitch(str(wav), dur.cpu().numpy())
-                pitch_vecs['mel'][fnames[j]] = p_mel
-                pitch_vecs['char'][fnames[j]] = p_char
-                pitch_vecs['trichar'][fnames[j]] = p_trichar
-        if args.trim_silence is not None:
-            assert args.extract_durs_from_textgrids, \
-                "Can only trim silences based on TextGrid alignments"
-            keep_sil_frames = args.trim_silence
-            if keep_sil_frames > 0:
-                keep_sil_frames = np.round(keep_sil_frames * args.sampling_rate / args.hop_length)
-            keep_sil_frames = int(keep_sil_frames)
-            for j, text in enumerate(texts):
-                text = np.array(text)
-                sil_idx = np.where(text == 'sil')
-                sil_durs = durations[j][sil_idx]
-                trim_durs = np.array([d - keep_sil_frames if d > keep_sil_frames else 0 for d in sil_durs])
-                if len(trim_durs) == 2:
-                    # trim both sides
-                    trim_start, trim_end = trim_durs
-                    trim_end = -trim_end
-                elif sil_durs[0] == 0:
-                    # trim only leading silence
-                    trim_start, trim_end = trim_durs[0], None
-                elif sil_durs[0] == len(texts) - 1:
-                    # trim only trailing silence
-                    trim_start, trim_end = None, -trim_durs[0]
-                if trim_end == 0:
-                    trim_end = None
-                if args.trim_silence == 0:
-                    sil_mask = text != "sil"
-                else:
-                    sil_mask = np.ones_like(text, dtype=bool)
-                text = text[sil_mask]
-                if args.output_meta_file is not None:
-                    metadata[fnames[j]] = text
-                mel = mels_padded[j][:, :mel_lens[j]].cpu()
-                mel = mel[:, trim_start:trim_end]
-                dur = durations[j]
-                dur = dur.put(torch.tensor(sil_idx), sil_durs - trim_durs)
-                dur = dur[sil_mask]
-                assert mel.shape[1] == sum(dur), \
-                    "{}: Trimming led to mismatched durations ({}) and mels ({})".format(
-                        fnames[j], sum(dur), mel.shape[1])
-                # TODO: Not handling mel- or trichar-level pitch_vecs yet
-                pitch = pitch_vecs['char'][fnames[j]]
-                pitch = pitch[sil_mask]
-                pitch_vecs['char'][fnames[j]] = pitch
-                assert len(pitch) == len(dur), \
-                    "{}: Trimming led to mismatched durations ({}) and pitches ({})".format(
-                        fnames[j], len(dur), len(pitch))
-                # save mels and durs again (sorry). pitches saved below
-                torch.save(mel, os.path.join(args.dataset_path, 'mels', fnames[j] + '.pt'))
-                torch.save(dur, os.path.join(args.dataset_path, 'durations', fnames[j] + '.pt'))
+        pitch_vecs = extract_pitches(
+            pitch_vecs, durations, fnames, args.dataset_path, args.trim_silences, start_times, end_times)
+
+        if args.trim_silences is not None:
+            pitch_vecs, metadata = trim_silences(
+                args.trim_silences, args.sampling_rate, args.hop_length, fnames, args.dataset_path,
+                mel_lens, mels_padded, durations, pitch_vecs, texts, metadata)
 
         nseconds = time.time() - tik
         DLLogger.log(step=f'{i+1}/{len(data_loader)} ({nseconds:.2f}s)', data={})
 
-    if args.extract_pitch_mel:
-        normalize_pitch_vectors(pitch_vecs['mel'])
-        for fname, pitch in pitch_vecs['mel'].items():
-            fpath = os.path.join(args.dataset_path, 'pitch_mel', fname + '.pt')
-            torch.save(torch.from_numpy(pitch), fpath)
+    mean, std = normalize_pitch_vectors(pitch_vecs)
+    for fname, pitch in pitch_vecs.items():
+        fpath = os.path.join(args.dataset_path, 'pitches', fname + '.pt')
+        torch.save(torch.from_numpy(pitch), fpath)
+    save_stats(args.dataset_path, args.wav_text_filelist, 'pitches', mean, std)
 
-    if args.extract_pitch_char:
-        mean, std = normalize_pitch_vectors(pitch_vecs['char'])
-        for fname, pitch in pitch_vecs['char'].items():
-            fpath = os.path.join(args.dataset_path, 'pitch_char', fname + '.pt')
-            torch.save(torch.from_numpy(pitch), fpath)
-        save_stats(args.dataset_path, args.wav_text_filelist, 'pitch_char',
-                   mean, std)
-
-    if args.extract_pitch_trichar:
-        normalize_pitch_vectors(pitch_vecs['trichar'])
-        for fname, pitch in pitch_vecs['trichar'].items():
-            fpath = os.path.join(args.dataset_path, 'pitch_trichar', fname + '.pt')
-            torch.save(torch.from_numpy(pitch), fpath)
-
-    # TODO: only handling mels, durations, pitch_char and texts for now
     if args.output_meta_file is not None:
         with open(args.output_meta_file, 'w') as meta_out:
             for fname in filenames:
                 meta_out.write(
-                    'mels/{0}.pt|durations/{0}.pt|pitch_char/{0}.pt|{1}\n'.format(
+                    'mels/{0}.pt|durations/{0}.pt|pitches/{0}.pt|{1}\n'.format(
                         fname, ' '.join(metadata[fname])))
 
     DLLogger.flush()
