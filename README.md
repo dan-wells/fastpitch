@@ -1,562 +1,289 @@
 # FastPitch 1.0 for PyTorch
 
-This repository provides a script and recipe to train the FastPitch TTS model, originally developed by [NVIDIA](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechSynthesis/FastPitch).
+This repository is based on NVIDIA's reference implementation of FastPitch 1.0,
+extracted from their [DeepLearningExamples](https://github.com/NVIDIA/DeepLearningExamples) repository.
 
-<details>
-<summary><b>Contents</b></summary>
+The code was forked from commit [`49e23b4`](https://github.com/NVIDIA/DeepLearningExamples/tree/49e23b4597a6fca461321a085d8eb8abf1e215e2/PyTorch/SpeechSynthesis/FastPitch),
+but includes such changes from upstream as we find to taste along with additional
+modifications made for our own work. For now we maintain the approach outlined
+in the [original paper](https://ieeexplore.ieee.org/abstract/document/9413889)
+with explicit duration targets from forced alignment used during training,
+rather than the [joint alignment learning approach](https://arxiv.org/abs/2108.10447)
+added later (FastPitch 1.1 in the source repo).
 
-- [Model overview](#model-overview)
-    * [Model architecture](#model-architecture)
-    * [Training configuration](#training-configuration)
-- [Quick Start Guide](#quick-start-guide)
-- [Advanced](#advanced)
-    * [Scripts and sample code](#scripts-and-sample-code)
-    * [Parameters](#parameters)
-    * [Command-line options](#command-line-options)
-    * [Data preprocessing](#data-preprocessing)
-    * [Training process](#training-process)
-    * [Inference process](#inference-process)
-- [Performance](#performance)
-    * [Benchmarking](#benchmarking)
-    * [Results](#results)
+## Data preparation
 
-</details>
+FastPitch learns to predict mel-scale spectrograms from input symbol sequences
+(e.g. text or phones), with explicit duration and pitch prediction per symbol.
+You can use `prepare_dataset.py` to extract target features given a list of
+audio files and corresponding forced alignments:
 
-## Model overview
-
-[FastPitch](https://arxiv.org/abs/2006.06873) is a fully-parallel transformer architecture with prosody control over pitch and individual phoneme duration.
-It is one of two major components in a neural, text-to-speech (TTS) system:
-
-* a mel-spectrogram generator such as [FastPitch](https://arxiv.org/abs/2006.06873) or [Tacotron 2](https://arxiv.org/abs/1712.05884), and
-* a waveform synthesizer such as [WaveGlow](https://arxiv.org/abs/1811.00002) (see [NVIDIA example code](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechSynthesis/Tacotron2)).
-
-Such two-component TTS system is able to synthesize natural sounding speech from raw transcripts.
-
-The FastPitch model generates mel-spectrograms and predicts a pitch contour from raw input text.
-Some of the capabilities of FastPitch are presented on the website with [samples](https://fastpitch.github.io/).
-
-Speech synthesized with FastPitch has state-of-the-art quality, and does not suffer from missing/repeating phrases like Tacotron2 does.
-This is reflected in Mean Opinion Scores ([details](https://arxiv.org/abs/2006.06873)).
-
-| Model     | Mean Opinion Score (MOS) |
-|:----------|:-------------------------|
-| Tacotron2 | 3.946 ± 0.134            |
-| FastPitch | 4.080 ± 0.133            |
-
-The FastPitch model is based on the [FastSpeech](https://arxiv.org/abs/1905.09263) model.
-The main differences between FastPitch and FastSpeech are that FastPitch:
-
-* explicitly learns to predict the pitch contour,
-* pitch conditioning removes harsh sounding artifacts and provides faster convergence,
-* no need for distilling mel-spectrograms with a teacher model,
-* character durations are extracted with a pre-trained Tacotron 2 model.
-
-The FastPitch model is similar to [FastSpeech2](https://arxiv.org/abs/2006.04558), which has been developed concurrently.
-FastPitch averages pitch values over input tokens, and does not use additional conditioning such as the energy.
-
-FastPitch is trained on the publicly available [LJ Speech dataset](https://keithito.com/LJ-Speech-Dataset/).
-
-### Model architecture
-
-FastPitch is a fully feedforward [Transformer](#glossary) model that predicts mel-spectrograms from raw text (Figure 1).
-The entire process is parallel, which means that all input letters are processed simultaneously to produce a full mel-spectrogram in a single forward pass.
-
-<p align="center">
-  <img src="./img/fastpitch_model.png" alt="FastPitch model architecture" />
-</p>
-<p align="center">
-  <em>Figure 1.
-  Architecture of FastPitch.
-  The model is composed of a bidirectional Transformer backbone (also known as a Transformer encoder), a pitch predictor, and a duration predictor.
-  After passing through the first N Transformer encoder blocks, the signal is augmented with pitch information and discretely upsampled.
-  Then it goes through another set of N Transformer blocks, with the goal of smoothing out the upsampled signal, and constructing a mel-spectrogram.
-  </em>
-</p>
-
-### Training configuration
-
-The code here supports multi-GPU and mixed precision training with dynamic loss scaling, as well as mixed precision inference.
-
-The following features were implemented in this model:
-
-* data-parallel multi-GPU training,
-* dynamic loss scaling with backoff mixed precision training,
-* gradient accumulation for reproducible results regardless of the number of GPUs.
-
-To speed-up FastPitch training, reference mel-spectrograms, character durations, and pitch cues are generated during the pre-processing step and read directly from the disk during training.
-For more information on data pre-processing refer to [Dataset guidelines](#dataset-guidelines) and the [paper](https://arxiv.org/abs/2006.06873).
-
-## Quick Start Guide
-
-Perform the following steps to train your model using the default FastPitch training configuration on the LJSpeech 1.1 dataset.
-For the specifics concerning training and inference, see the [Advanced](#advanced) section.
-Pre-trained FastPitch models are available for download on [NGC](https://ngc.nvidia.com/catalog/models?query=FastPitch&quickFilter=models).
-
-1. Clone the repository.
-   ```bash
-   git clone https://github.com/dan-wells/FastPitch.git
-   cd FastPitch
-   ```
-
-2. Download and preprocess the dataset.
-
-   Use the scripts to automatically download and preprocess the training, validation and test datasets:
-   ```bash
-   bash scripts/download_dataset.sh
-   bash scripts/prepare_dataset.sh
-   ```
-
-   The data is downloaded to the `./LJSpeech-1.1` directory (on the host).
-   The complete dataset has the following structure:
-   ```bash
-   ./LJSpeech-1.1
-   ├── durations        # Character durations estimates for forced alignment training
-   ├── mels             # Pre-calculated target mel-spectrograms
-   ├── metadata.csv     # Mapping of waveforms to utterances
-   ├── pitch_char       # Average per-character fundamental frequencies for input utterances
-   ├── pitch_char_stats__ljs_audio_text_train_filelist.json    # Mean and std of pitch for training data
-   ├── README
-   └── wavs             # Raw waveforms
-   ```
-
-3. Start training.
-   ```bash
-   bash scripts/train.sh
-   ```
-   The training will produce a FastPitch model capable of generating mel-spectrograms from raw text.
-   It will be serialized as a single `.pt` checkpoint file, along with a series of intermediate checkpoints.
-   The script is configured for 8x GPU with at least 16GB of memory. Consult [Training process](#training-process) and [example configs](#training-performance-benchmark) to adjust to a different configuration or enable Automatic Mixed Precision.
-
-4. Start validation/evaluation.
-
-   Ensure your training loss values are comparable to those listed in the table in the
-   [Results](#results) section.
-   Note that the validation loss is evaluated with ground truth durations for letters (not the predicted ones).
-   The loss values are stored in the `./output/nvlog.json` log file, `./output/{train,val,test}` as TensorBoard logs, and printed to the standard output (`stdout`) during training.
-   The main reported loss is a weighted sum of losses for mel-, pitch-, and duration- predicting modules.
-
-   The audio can be generated by following the [Inference process](#inference-process) section below.
-   The synthesized audio should be similar to the samples in the `./audio` directory.
-
-5. Start inference/predictions.
-
-   To synthesize audio, you will need a WaveGlow model, which generates waveforms based on mel-spectrograms generated with FastPitch.
-   A pre-trained model can be downloaded using the `scripts/download_dataset.sh` script.
-   Alternatively, to train WaveGlow from scratch, follow the instructions in [NVIDIA/DeepLearningExamples/Tacotron2](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechSynthesis/Tacotron2) and replace the checkpoint in the `./pretrained_models/waveglow` directory.
-
-   You can perform inference using the respective `.pt` checkpoints that are passed as `--fastpitch` and `--waveglow` arguments:
-   ```bash
-   python inference.py --cuda \
-                       --fastpitch output/<FastPitch checkpoint> \
-                       --waveglow pretrained_models/waveglow/<WaveGlow checkpoint> \
-                       --wn-channels 256 \
-                       -i phrases/devset10.tsv \
-                       -o output/wavs_devset10
-   ```
-
-   The speech is generated from a file passed with the `-i` argument, with one utterance per line:
-   ```bash
-   `<output wav file name>|<utterance>`
-   ```
-   To run inference in mixed precision, use the `--amp` flag.
-   The output audio will be stored in the path specified by the `-o` argument.
-   Consult the `inference.py` script to learn more options, such as setting the batch size.
-
-## Advanced
-
-The following sections provide greater details of the dataset, running training and inference, and the training results.
-
-### Scripts and sample code
-
-The repository holds code for FastPitch (training and inference) and WaveGlow (inference only).
-The code specific to a particular model is located in that model’s directory - `./fastpitch` and `./waveglow` - and common functions live in the `./common` directory.
-The model-specific scripts are as follows:
-
-* `<model_name>/model.py` - the model architecture, definition of forward and
-inference functions
-* `<model_name>/arg_parser.py` - argument parser for parameters specific to a
-given model
-* `<model_name>/data_function.py` - data loading functions
-* `<model_name>/loss_function.py` - loss function for the model
-
-The common scripts contain layer definitions common to both models (`common/layers.py`), some utility scripts (`common/utils.py`) and scripts for audio processing (`common/audio_processing.py` and `common/stft.py`).
-
-In the root directory `./` of this repository, the `./train.py` script is used for training while inference can be executed with the `./inference.py` script.
-The scripts `./models.py`, `./data_functions.py` and `./loss_functions.py` call the respective scripts in the `<model_name>` directory, depending on what model is being trained using the `train.py` script.
-
-The repository is structured similarly to the [NVIDIA Tacotron2 Deep Learning example](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechSynthesis/Tacotron2), so that they could be combined in more advanced use cases.
-
-### Parameters
-
-In this section, we list the most important hyperparameters and command-line arguments,
-together with the recommended default values that are used to train FastPitch.
-
-* `--epochs` - number of epochs (default: 1500)
-* `--learning-rate` - learning rate (default: 0.1)
-* `--batch-size` - batch size (default: 32)
-* `--amp` - use mixed precision training (default: disabled)
-* `--pitch-predictor-loss-scale` - rescale the loss of the pitch predictor module to dampen its influence on the shared feedforward transformer blocks (default: 0.1)
-* `--duration-predictor-loss-scale` - rescale the loss of the duration predictor module to dampen its influence on the shared feedforward transformer blocks (default: 0.1)
-
-### Command-line options
-
-To see the full list of available options and their descriptions, use the `-h` or `--help` command line option, for example:
-```bash
-python train.py --help
+```sh
+python prepare_dataset.py \
+  --dataset-path $DATA_ROOT \
+  --wav-text-filelist $FILELIST \
+  --durations-from textgrid
 ```
 
-The following example output is printed when running the model:
+`$DATA_ROOT` is the directory where all derived features will be stored, in
+subdirectories `mels`, `pitches` and `durations`. A file listing global pitch
+mean and standard deviation will also be written here, to
+`$DATA_ROOT/pitches_stats__${FILELIST_STEM}.json`.
 
-```bash
-DLL 2021-09-29 16:36:41.844470 - epoch    1 | iter   1/281 | loss 38.33 | mel loss 37.89 | dur loss  2.98 | pitch loss  1.37 | lrate 3.16e-06 | took 0.58 s
-DLL 2021-09-29 16:36:42.089743 - epoch    1 | iter   2/281 | loss 40.42 | mel loss 39.98 | dur loss  3.01 | pitch loss  1.46 | lrate 6.32e-06 | took 0.24 s
-DLL 2021-09-29 16:36:42.313590 - epoch    1 | iter   3/281 | loss 38.49 | mel loss 38.07 | dur loss  2.96 | pitch loss  1.28 | lrate 9.49e-06 | took 0.22 s
+You should make all audio files in `$FILELIST` accessible under
+`$DATA_ROOT/wavs`, and corresponding forced alignments represented as Praat
+TextGrids under `$DATA_ROOT/TextGrid`. `$FILELIST` should contain audio
+filenames and transcripts in your desired symbol set, with lines like:
+
+```
+/path/to/data_root/wavs/audio1.wav|this is a text transcript
 ```
 
-### Data preprocessing
+The expected path to the TextGrid file representing alignment information for
+this utterance is `/path/to/data_root/TextGrid/audio1.TextGrid`.
 
-The FastPitch and WaveGlow models were trained on the LJSpeech-1.1 dataset.
-The `./scripts/download_dataset.sh` script will automatically download and extract the dataset to the `./LJSpeech-1.1` directory.
+Use the `--output-meta-file` option to write a metadata file collecting paths to
+all extracted features and preprocessed transcripts per utterance which can be
+passed directly to `train.py` for model training. Alternatively, you can put
+this file together yourself, with lines like:
 
-#### Dataset guidelines
-
-The LJSpeech dataset has 13,100 clips that amount to about 24 hours of speech of a single, female speaker.
-Since the original dataset does not define a train/dev/test split of the data, we provide a split in the form of three file lists:
-```bash
-./filelists
-├── ljs_mel_dur_pitch_text_test_filelist.txt
-├── ljs_mel_dur_pitch_text_train_filelist.txt
-└── ljs_mel_dur_pitch_text_val_filelist.txt
+```
+mels/audio1.pt|durations/audio1.pt|pitches/audio1.pt|<transcript>[|<speaker_id>]
 ```
 
-*NOTE: When combining FastPitch/WaveGlow with external models trained on LJSpeech-1.1, make sure that your train/dev/test split matches. Different organizations may use custom splits. A mismatch poses a risk of leaking the training data through model weights during validation and testing.*
+Note that paths to feature files are relative to the provided `--dataset-path`,
+which will also be passed to `train.py`. Integer speaker IDs are an optional
+field in case you want to train a multi-speaker model.
 
-FastPitch predicts character durations just like [FastSpeech](https://arxiv.org/abs/1905.09263) does.
-This calls for training with forced alignments, expressed as the number of output mel-spectrogram frames for every input character.
-To this end, a pre-trained [Tacotron 2 model](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechSynthesis/Tacotron2) can be used.
-Its attention matrix relates the input characters with the output mel-spectrogram frames.
-Alternatively, you can provide forced alignments in Praat TextGrid format, for example as obtained using the [Montreal Forced Aligner](https://github.com/MontrealCorpusTools/Montreal-Forced-Aligner)
+### Supported input representations
 
-For every mel-spectrogram frame, its fundamental frequency in Hz is estimated with [Praat](http://praat.org).
-Those values are then averaged over every character, in order to provide sparse pitch cues for the model.
-Character boundaries are calculated using durations provided to the model as above.
+Use the `--input-type` and `--symbol-set` options to `prepare_dataset.py` to
+specify the input symbols you are using. In the list below, top-level bullets
+are possible values for `--input-type` and second-level for `--symbol-set`:
 
-<p align="center">
-  <img src="./img/pitch.png" alt="Pitch estimates extracted with Praat" />
-</p>
-<p align="center">
-  <em>Figure 2.
-  Pitch estimates for mel-spectrogram frames of phrase "in being comparatively" (in blue) averaged over characters (in red).
-  Silent letters have duration 0 and are omitted.</em>
-</p>
+- `char` (raw text)
+    * `english_basic`
+    * `english_basic_lowercase`
+    * `english_expanded`
+- `phone` or `pf` (phonological feature vectors)
+    * `arpabet`
+    * `combilex`
+    * `ipa`
+    * `ipa_all`
+    * `xsampa`
+- `unit` (integer symbol IDs)
+    * Size of symbol vocabulary
 
-#### Multi-dataset
+See `common/text/symbols.py` for definitions of symbol sets corresponding to
+each combination of options above.
 
-Follow these steps to use datasets different from the default LJSpeech dataset.
+Additional notes:
 
-1. Prepare a directory with .wav files.
-   ```bash
-   ./my_dataset
-   └── wavs
-   ```
+- `char` input can just look like regular English text with spaces between
+  words, normalized to whatever degree makes sense given the range of characters
+  in your chosen `--symbol-set`
+    * Check `common/text/cleaners.py` and the `--text-cleaners` option for
+      built-in text normalization options
+- `phone`, `pf` and `unit` inputs should probably be individual symbols
+  separated by spaces, e.g. an `xsampa` rendering of the phrase 'the cat'
+  would have a transcript like `D @ k a t`
+    * Some support is possible for phone transcripts which may be more
+      human-readable when using `ipa{,_all}`, thanks to the way
+      [PanPhon](https://github.com/dmort27/panphon)
+      handles such strings, e.g. transcripts like `ðə kæt`
+- If you want to use phonological feature vectors as input (`--input-type pf`),
+  transcripts should be phone strings, with symbols specified by `--symbol-set`
+  as above
+- `unit` is intended for use with integer symbol IDs, e.g. k-means acoustic
+  cluster IDs extracted from raw audio using a self-supervised model such as
+  [HuBERT](https://ieeexplore.ieee.org/document/9414460)
+    * Pass the size of the symbol vocabulary in `--symbol-set`; if this is e.g.
+      100, we expect transcripts to be integer sequences like `79 3 14 14 25`,
+      where possible individual symbol values are in the range [0, 99]
 
-2. Prepare filelists with transcripts and paths to .wav files.
-   They define training/validation split of the data (test is currently unused):
-   ```bash
-   ./filelists
-   ├── my_dataset_mel_ali_pitch_text_train_filelist.txt
-   └── my_dataset_mel_ali_pitch_text_val_filelist.txt
-   ```
+### Forced alignment
 
-   Those filelists should list a single utterance per line as:
-   ```bash
-   `<audio file path>|<transcript>`
-   ```
-   The `<audio file path>` is the relative path to the path provided by the `--dataset-path` option of `train.py`.
+We rely on forced alignment for extracting target durations per input symbol,
+and subsequently calculating average pitch values per the same. Given audio
+files, transcripts and a pronunciation lexicon (mapping words to phone strings
+or just character sequences, depending on your desired input), you could
+generate the required
+[TextGrid alignment files](https://www.fon.hum.uva.nl/praat/manual/TextGrid_file_formats.html)
+per utterance using a tool such as the
+[Montreal Forced Aligner](https://github.com/MontrealCorpusTools/Montreal-Forced-Aligner)
+or our own [KISS Aligner](https://github.com/dan-wells/kiss-aligner).
 
-3. Run the pre-processing script to calculate mel-spectrograms, durations and pitch:
-   ```bash
-   python extract_mels.py --cuda \
-                          --dataset-path ./my_dataset \
-                          --wav-text-filelist ./filelists/my_dataset_mel_ali_pitch_text_train_filelist.txt \
-                          --extract-mels \
-                          --extract-durations \
-                          --extract-pitch-char \
-                          --tacotron2-checkpoint ./pretrained_models/tacotron2/state_dict.pt
+Alternatively, we can extract frame-level durations from repeated sequences of
+input symbols also specified at the frame level by run-length encoding. This is
+the expected method to extract duration targets from HuBERT code sequences when
+using `--input-type unit`, for example.
 
-   python extract_mels.py --cuda \
-                          --dataset-path ./my_dataset \
-                          --wav-text-filelist ./filelists/my_dataset_mel_ali_pitch_text_val_filelist.txt \
-                          --extract-mels \
-                          --extract-durations \
-                          --extract-pitch-char \
-                          --tacotron2-checkpoint ./pretrained_models/tacotron2/state_dict.pt"
-   ```
+### Audio feature extraction
 
-   Alternatively, place Praat TextGrids with filenames matching your .wav files
-   under `./my_dataset/TextGrid` and run the pre-processing script like:
-   ```bash
-   python extract_mels.py --cuda \
-                          --dataset-path ./my_dataset \
-                          --wav-text-filelist ./filelists/my_dataset_mel_ali_pitch_text_train_filelist.txt \
-                          --extract-mels \
-                          --extract-pitch-char \
-                          --extract-durs-from-textgrids
-    ```
+Mel spectrogram feature extraction is defined by several parameters passed to
+`prepare_dataset.py`:
 
-   By default, audio files are assumed to be signed 16-bit, sampled at 22.05 kHz.
-   You can adjust these settings to match your audio files using the `--max-wav-value` (should be `(2**<bit depth>) / 2`) and `--sampling-rate` options to `extract_mels.py`.
+- `--sampling-rate`, the sampling rate of your audio data (default 22050 Hz)
+- `--filter-length`, the number of FFT frequency bins used (default 1024)
+- `--hop-length`, frame shift of the FFT analysis window (default 256 samples)
+- `--win-length`, length of signal attenuation window (default 1024)
+- `--n-mel-channels`, number of bins in mel-scale filter bank (default 80)
+- `--mel-f{min,max}`, minimum and maximum frequency of mel filter bank bins
+  (defaults 0, 8000)
 
-   In order to use the prepared dataset, pass the following to the `train.py` script:
-   ```bash
-   --dataset-path ./my_dataset` \
-   --training-files ./filelists/my_dataset_mel_ali_pitch_text_train_filelist.txt \
-   --validation files ./filelists/my_dataset_mel_ali_pitch_text_val_filelist.txt
-   ```
+These parameters define the frequency and time resolution of audio feature
+extraction. Each frequency bin in the FFT analysis window spans `sampling-rate /
+filter-length` Hz, and each analysis window covers `filter-length /
+sampling-rate` seconds of audio. For the default values specified above, this
+gives 22050 / 1024 = 21.5 Hz frequency resolution and 1024 / 22050 = 46 ms
+analysis windows. The frame shift moves the analysis window `hop-length /
+sampling-rate` seconds forward each frame, for a stride of 256 / 22050 = 11 ms
+(~75% overlap between adjacent frames). For efficiency, `filter-length` should
+be some power of 2, and in general `win-length` should match `filter-length`.
 
-### Training process
+See [this document](http://www.add.ece.ufl.edu/4511/references/ImprovingFFTResoltuion.pdf)
+for additional discussion of FFT parameters.
 
-FastPitch is trained to generate mel-spectrograms from raw text input.
-It uses short time Fourier transform (STFT) to generate target mel-spectrograms from audio waveforms to be the training targets.
-The training loss is averaged over an entire training epoch, whereas the validation loss is averaged over the validation dataset.
+If you want to use HuBERT unit sequences as input, then you will need to match
+the 50 Hz framerate of that feature extraction process by adjusting the
+parameters listed above. If there is a mismatch, then the lengths of your mel
+spectrograms will not line up with the durations calculated by run-length
+encoding framewise HuBERT codes. For example, if your audio data is sampled at
+16 kHz, use `--hop-length 320` for a 20 ms frame shift, i.e. 50 Hz framerate.
 
-The `scripts/train.sh` script is configured for 8x GPU with at least 16GB of memory:
-    ```bash
-    --batch-size 32
-    --gradient-accumulation-steps 1
-    ```
+Additional options are available for applying peak normalization to audio data
+(for example if it was collected across multiple recording sessions) or for
+trimming excessive leading or trailing silences found during forced alignment.
 
-In a single accumulated step, there are `batch_size x gradient_accumulation_steps x GPUs = 256` examples being processed in parallel.
-With a smaller number of GPUs, increase `--gradient_accumulation_steps` to keep this relation satisfied, e.g., through env variables
-    ```bash
-    NUM_GPUS=4 GRAD_ACCUMULATION=2 bash scripts/train.sh
-    ```
-With automatic mixed precision (AMP), a larger batch size fits in 16GB of memory:
-    ```bash
-    NUM_GPUS=4 GRAD_ACCUMULATION=1 BS=64 AMP=true bash scripts/train.sh
-    ```
+## Model training
 
-### Inference process
+To train a phone-based system from IPA transcripts, after preparing a dataset
+and splitting into train and validation sets:
 
-You can run inference using the `./inference.py` script.
-This script takes text as input and runs FastPitch and then WaveGlow inference to produce an audio file.
-It requires pre-trained checkpoints of both models and input text as a text file, with one phrase per line.
-
-Pre-trained FastPitch models are available for download on [NGC](https://ngc.nvidia.com/catalog/models?query=FastPitch&quickFilter=models).
-
-Having pre-trained models in place, run the sample inference on LJSpeech-1.1 test-set with:
-```bash
-bash scripts/inference_example.sh
+```sh
+python train.py \
+  --dataset-path $DATA_ROOT \
+  --output $CHECKPOINT_DIR \
+  --training-files $DATA_ROOT/train_meta.txt \
+  --validation-files $DATA_ROOT/val_meta.txt \
+  --pitch-mean-std-file $DATA_ROOT/pitches_stats__${FILELIST_STEM}.json \
+  --input-type phone \
+  --symbol-set ipa \
+  --epochs 100 \
+  --epochs-per-checkpoint 10 \
+  --batch-size 16 \
+  --cuda
 ```
 
-Examine the `inference_example.sh` script to adjust paths to pre-trained models, and call `python inference.py --help` to learn all available options.
-By default, synthesized audio samples are saved in `./output/audio_*` folders.
+Model checkpoints will be saved to `$CHECKPOINT_DIR` every 10 epochs, alongside
+TensorBoard logs. Make sure to pass `--cuda` to run on GPU if available.
+Additional options are available for automatic mixed precision (AMP) and
+distributed training.
 
-FastPitch allows us to linearly adjust the pace of synthesized speech like [FastSpeech](https://arxiv.org/abs/1905.09263).
-For instance, pass `--pace 0.5` for a twofold decrease in speed.
+For multi-speaker data, specify `--n-speakers N` to learn additional speaker
+embeddings. Input metadata files should then include integer speaker IDs as the
+final field on each line, with IDs ranging between [0, `n-speakers` - 1].
 
-For every input character, the model predicts a pitch cue - an average pitch over a character in Hz.
-Pitch can be adjusted by transforming those pitch cues. A few simple examples are provided below.
+## Synthesizing speech
 
-| Transformation                              | Flag                          | Samples                                 |
-| :-------------------------------------------|:------------------------------|:---------------------------------------:|
-| None                                        | -                             | [link](./audio/sample_fp16.wav)         |
-| Amplify pitch wrt. to the mean pitch        |`--pitch-transform-amplify`    | [link](./audio/sample_fp16_amplify.wav) |
-| Invert pitch wrt. to the mean pitch         |`--pitch-transform-invert`     | [link](./audio/sample_fp16_invert.wav)  |
-| Raise/lower pitch by <hz>                   |`--pitch-transform-shift <hz>` | [link](./audio/sample_fp16_shift.wav)   |
-| Flatten the pitch to a constant value       |`--pitch-transform-flatten`    | [link](./audio/sample_fp16_flatten.wav) |
-| Change the pace of speech (1.0 = unchanged) |`--pace <value>`               | [link](./audio/sample_fp16_pace.wav)    |
+After training has completed, we can predict mel spectrograms from test
+transcripts, and optionally generate speech audio using a separate vocoder
+model.
 
-The flags can be combined.
-Modify these functions directly in the `inference.py` script to gain more control over the final result.
+First, prepare an input metadata file. This should be a TSV file with a header
+row indicating whichever of the following fields you care to provide (so order does
+not matter):
 
-You can find all the available options by calling `python inference.py --help`.
-More examples are presented on the website with [samples](https://fastpitch.github.io/).
+- `text`, transcripts of test utterances
+- `output`, path to save synthesized speech audio
+- `mel_output`, path to save predicted mel spectrogram features
+- `speaker`, integer speaker ID per utterance
+- `mel`, path to load mel spectrogram features, e.g. reference values for copy
+  synthesis
+- `pitch`, path to load reference pitch values
+- `duration`, path to load reference duration values
 
-## Performance
+To synthesize speech from IPA phone transcripts using the final checkpoint from
+our `train.py` run above, using a pre-trained WaveGlow vocoder (for example
+downloaded using `scripts/download_waveglow.sh`):
 
-<details>
-<summary>Expand for full model performance details from NVIDIA</summary>
+```sh
+python inference.py \
+  --input $DATA_ROOT/test_meta.tsv \
+  --output $OUTPUT_DIR \
+  --fastpitch $CHECKPOINT_DIR/FastPitch_checkpoint_100.pt \
+  --input-type phone \
+  --symbol-set ipa \
+  --vocoder WaveGlow \
+  --vocoder-checkpoint pretrained_models/waveglow/nvidia_waveglow256pyt_fp16.pt \
+  --wn-channels 256 \
+  --cuda
+```
 
-The performance measurements in this document were conducted at the time of publication and may not reflect the performance achieved from NVIDIA’s latest software release.
-For the most up-to-date performance measurements, go to [NVIDIA Data Center Deep Learning Product Performance](https://developer.nvidia.com/deep-learning-performance-training-inference).
+If `test_meta.tsv` includes an `output` field, synthesized speech will be saved
+to corresponding WAV files under `$OUTPUT_DIR`. Otherwise, audio files will be
+saved to sequential files named like `$OUTPUT_DIR/audio_1.wav`.
 
-### Benchmarking
+Use the `--sampling-rate` option to ensure output audio files are written at the
+correct sampling rate. Predicted mel spectrograms are trimmed to remove noise
+(introduced by batching multiple utterances to a fixed length), with target
+durations calculated using `--stft-hop-length`, which should match the value of 
+`--hop-length` passed to `prepare_dataset.py`.
 
-The following section shows how to run benchmarks measuring the model performance in training and inference mode.
+For a multi-speaker FastPitch model, pass `--n-speakers` to match the value used
+with `train.py` and specify a target speaker ID using `--speaker N` to
+synthesize all utterances in the same target speaker's voice. If `test_meta.tsv`
+includes a `speaker` field then this will take precedence, and individual
+utterances can be synthesized each using a differen't speaker's voice.
 
-#### Training performance benchmark
+### Vocoder options
 
-To benchmark the training performance on a specific batch size, run:
+The WaveGlow vocoder used in the example above, downloaded through
+`scripts/download_waveglow.sh`, is a pre-trained checkpoint from NVIDIA using
+the [LJ Speech](https://keithito.com/LJ-Speech-Dataset/) dataset at 22.05 kHz, so
+make sure this matches your training data before using this particular model.
+The `--wn-channels` parameter is also specific to WaveGlow models (so you will
+find it documented only in `waveglow/arg_parser.py`).
 
-* NVIDIA DGX A100 (8x A100 40GB)
-    ```bash
-        AMP=true NUM_GPUS=1 BS=128 GRAD_ACCUMULATION=2 EPOCHS=10 bash scripts/train.sh
-        AMP=true NUM_GPUS=8 BS=32 GRAD_ACCUMULATION=1 EPOCHS=10 bash scripts/train.sh
-        NUM_GPUS=1 BS=128 GRAD_ACCUMULATION=2 EPOCHS=10 bash scripts/train.sh
-        NUM_GPUS=8 BS=32 GRAD_ACCUMULATION=1 EPOCHS=10 bash scripts/train.sh
-    ```
+Alternatively, we support [HiFi-GAN](https://github.com/jik876/hifi-gan)
+vocoders, for example using the pre-trained `UNIVERSAL_V1` model:
 
-* NVIDIA DGX-1 (8x V100 16GB)
-    ```bash
-        AMP=true NUM_GPUS=1 BS=64 GRAD_ACCUMULATION=4 EPOCHS=10 bash scripts/train.sh
-        AMP=true NUM_GPUS=8 BS=32 GRAD_ACCUMULATION=1 EPOCHS=10 bash scripts/train.sh
-        NUM_GPUS=1 BS=32 GRAD_ACCUMULATION=8 EPOCHS=10 bash scripts/train.sh
-        NUM_GPUS=8 BS=32 GRAD_ACCUMULATION=1 EPOCHS=10 bash scripts/train.sh
-    ```
+```sh
+python inference.py \
+  ...
+  --vocoder HiFi-GAN \
+  --vocoder-checkpoint $UNIVERSAL_V1/g_02500000 \
+  --hifigan-config $UNIVERSAL_V1/config.json \
+  ...
+```
 
-Each of these scripts runs for 10 epochs and for each epoch measures the average number of items per second.
-The performance results can be read from the `nvlog.json` files produced by the commands.
+It should be possible to run any checkpoint trained from the original HiFi-GAN
+repo, given an appropriate config file. We also have a
+[sample config](https://github.com/dan-wells/hifi-gan/blob/master/config/config_v1_16k_50Hz.json)
+for 16 kHz audio with a 50 Hz frame shift, again to match audio preprocessing
+when working with HuBERT models.
 
-#### Inference performance benchmark
+### Copy synthesis
 
-To benchmark the inference performance on a specific batch size, run:
+To run copy synthesis through your chosen vocoder, load reference mel
+spectrograms, pitch and duration values by adding corresponding fields in
+`test_meta.tsv` pointing to `.pt` files on disk for each utterance, for example
+as extracted using `prepare_dataset.py`. Paths can be relative if you also pass
+e.g. `--dataset-path $DATA_ROOT` to `inference.py`.
 
-* For FP16
-    ```bash
-    AMP=true BS_SEQUENCE=”1 4 8” REPEATS=100 bash scripts/inference_benchmark.sh
-    ```
+A similar method can be used to generate time-aligned synthetic data for vocoder
+fine-tuning, i.e. predicting ground-truth audio from errorful mel spectrograms
+predicted by a FastPitch model. In that case, you need only use reference
+durations in synthesis, and probably also pitch contours to further limit
+sources of variation from reference audio. Use `--save-mels` to save predicted
+mel spectrograms to disk, either to filepaths specified in the `{mel_,}output`
+field of `test_meta.tsv`, else to sequential files like `$OUTPUT_DIR/mel_1.wav`
+if not specified.
 
-* For FP32 or TF32
-    ```bash
-    BS_SEQUENCE=”1 4 8” REPEATS=100 bash scripts/inference_benchmark.sh
-    ```
+### Audio transforms
 
-The output log files will contain performance numbers for the FastPitch model (number of output mel-spectrogram frames per second, reported as `generator_frames/s w`) and for WaveGlow (number of output samples per second, reported as ` waveglow_samples/s`).
-The `inference.py` script will run a few warm-up iterations before running the benchmark.
-Inference will be averaged over 100 runs, as set by the `REPEATS` env variable.
-
-### Results
-
-The following sections provide details on how we achieved our performance and accuracy in training and inference.
-
-#### Training accuracy results
-
-##### Training accuracy: NVIDIA DGX A100 (8x A100 40GB)
-
-Our results were obtained by running the `./platform/DGXA100_FastPitch_{AMP,TF32}_8GPU.sh` training script in the 20.06-py3 NGC container on NVIDIA DGX A100 (8x A100 40GB) GPUs.
-
-| Loss (Model/Epoch)   |    50 |   250 |   500 |   750 |  1000 |  1250 |  1500 |
-|:---------------------|------:|------:|------:|------:|------:|------:|------:|
-| FastPitch AMP        | 0.503 | 0.252 | 0.214 | 0.202 | 0.193 | 0.188 | 0.184 |
-| FastPitch TF32       | 0.500 | 0.252 | 0.215 | 0.201 | 0.193 | 0.187 | 0.183 |
-
-##### Training accuracy: NVIDIA DGX-1 (8x V100 16GB)
-
-Our results were obtained by running the `./platform/DGX1_FastPitch_{AMP,FP32}_8GPU.sh` training script in the PyTorch 20.06-py3 NGC container on NVIDIA DGX-1 with 8x V100 16GB GPUs.
-
-All of the results were produced using the `train.py` script as described in the [Training process](#training-process) section of this document.
-
-| Loss (Model/Epoch)   |    50 |   250 |   500 |   750 |  1000 |  1250 |  1500 |
-|:---------------------|------:|------:|------:|------:|------:|------:|------:|
-| FastPitch AMP        | 0.499 | 0.250 | 0.211 | 0.198 | 0.190 | 0.184 | 0.180 |
-| FastPitch FP32       | 0.503 | 0.251 | 0.214 | 0.201 | 0.192 | 0.186 | 0.182 |
-
-<div style="text-align:center" align="center">
-  <img src="./img/loss.png" alt="Loss curves" />
-</div>
-
-#### Training performance results
-
-##### Training performance: NVIDIA DGX A100 (8x A100 40GB)
-
-Our results were obtained by running the `./platform/DGXA100_FastPitch_{AMP,TF32}_8GPU.sh` training script in the 20.06-py3 NGC container on NVIDIA DGX A100 (8x A100 40GB) GPUs.
-Performance numbers, in output mel-scale spectrogram frames per second, were averaged over
-an entire training epoch.
-
-|Number of GPUs|Batch size per GPU|Frames/s with mixed precision|Frames/s with TF32|Speed-up with mixed precision|Multi-GPU strong scaling with mixed precision|Multi-GPU strong scaling with TF32|
-|---:|------------------:|--------:|-------:|-----:|-----:|-----:|
-|  1 | 128@AMP, 128@TF32 |  164955 | 113725 | 1.45 | 1.00 | 1.00 |
-|  4 |  64@AMP,  64@TF32 |  619527 | 435951 | 1.42 | 3.76 | 3.83 |
-|  8 |  32@AMP,  32@TF32 | 1040206 | 643569 | 1.62 | 6.31 | 5.66 |
-
-###### Expected training time
-
-The following table shows the expected training time for convergence for 1500 epochs:
-
-|Number of GPUs|Batch size per GPU|Time to train with mixed precision (Hrs)|Time to train with TF32 (Hrs)|Speed-up with mixed precision|
-|---:|-----------------:|-----:|-----:|-----:|
-|  1 |128@AMP, 128@TF32 | 18.5 | 26.6 | 1.44 |
-|  4 | 64@AMP,  64@TF32 |  5.5 |  7.5 | 1.36 |
-|  8 | 32@AMP,  32@TF32 |  3.6 |  5.3 | 1.47 |
-
-##### Training performance: NVIDIA DGX-1 (8x V100 16GB)
-
-Our results were obtained by running the `./platform/DGX1_FastPitch_{AMP,FP32}_8GPU.sh` training script in the PyTorch 20.06-py3 NGC container on NVIDIA DGX-1 with 8x V100 16GB GPUs.
-Performance numbers, in output mel-scale spectrogram frames per second, were averaged over an entire training epoch.
-
-|Number of GPUs|Batch size per GPU|Frames/s with mixed precision|Frames/s with FP32|Speed-up with mixed precision|Multi-GPU strong scaling with mixed precision|Multi-GPU strong scaling with FP32|
-|---:|----------------:|-------:|-------:|-----:|-----:|-----:|
-|  1 | 64@AMP, 32@FP32 | 110370 |  41066 | 2.69 | 1.00 | 1.00 |
-|  4 | 64@AMP, 32@FP32 | 402368 | 153853 | 2.62 | 3.65 | 3.75 |
-|  8 | 32@AMP, 32@FP32 | 570968 | 296767 | 1.92 | 5.17 | 7.23 |
-
-To achieve these same results, follow the steps in the [Quick Start Guide](#quick-start-guide).
-
-###### Expected training time
-
-The following table shows the expected training time for convergence for 1500 epochs:
-
-|Number of GPUs|Batch size per GPU|Time to train with mixed precision (Hrs)|Time to train with FP32 (Hrs)|Speed-up with mixed precision|
-|---:|-----------------:|-----:|-----:|-----:|
-|  1 | 64@AMP,  32@FP32 | 27.6 | 72.7 | 2.63 |
-|  4 | 64@AMP,  32@FP32 |  8.2 | 20.3 | 2.48 |
-|  8 | 32@AMP,  32@FP32 |  5.9 | 10.9 | 1.85 |
-
-Note that most of the quality is achieved after the initial 500 epochs.
-
-#### Inference performance results
-
-The following tables show inference statistics for the FastPitch and WaveGlow text-to-speech system, gathered from 100 inference runs.
-Latency is measured from the start of FastPitch inference to the end of WaveGlow inference.
-Throughput is measured as the number of generated audio samples per second at 22kHz.
-RTF is the real-time factor which denotes the number of seconds of speech generated in a second of wall-clock time, per input utterance.
-The used WaveGlow model is a 256-channel model.
-
-Note that performance numbers are related to the length of input.
-The numbers reported below were taken with a moderate length of 128 characters.
-Longer utterances yield higher RTF, as the generator is fully parallel.
-
-##### Inference performance: NVIDIA DGX A100 (1x A100 40GB)
-
-Our results were obtained by running the `./scripts/inference_benchmark.sh` inferencing benchmarking script in the 20.06-py3 NGC container on NVIDIA DGX A100 (1x A100 40GB) GPU.
-
-|Batch size|Precision|Avg latency (s)|Latency tolerance interval 90% (s)|Latency tolerance interval 95% (s)|Latency tolerance interval 99% (s)|Throughput (samples/sec)|Speed-up with mixed precision|Avg RTF|
-|------:|------------:|--------------:|--------------:|--------------:|--------------:|----------------:|---------------:|----------:|
-|    1 | FP16   |     0.106 |   0.106 |   0.106 |   0.107 |      1,636,913 |      1.60 | 74.24 |
-|    4 | FP16   |     0.390 |   0.391 |   0.391 |   0.391 |      1,780,764 |      1.55 | 20.19 |
-|    8 | FP16   |     0.758 |   0.758 |   0.758 |   0.758 |      1,832,544 |      1.52 | 10.39 |
-|    1 | TF32   |     0.170 |   0.170 |   0.170 |   0.170 |      1,020,894 |         - | 46.30 |
-|    4 | TF32   |     0.603 |   0.603 |   0.603 |   0.603 |      1,150,598 |         - | 13.05 |
-|    8 | TF32   |     1.153 |   1.154 |   1.154 |   1.154 |      1,202,463 |         - |  6.82 |
-
-##### Inference performance: NVIDIA DGX-1 (1x V100 16GB)
-
-Our results were obtained by running the `./scripts/inference_benchmark.sh` script in the PyTorch 20.06-py3 NGC container.
-The input utterance has 128 characters, synthesized audio has 8.05 s.
-
-|Batch size|Precision|Avg latency (s)|Latency tolerance interval 90% (s)|Latency tolerance interval 95% (s)|Latency tolerance interval 99% (s)|Throughput (samples/sec)|Speed-up with mixed precision|Avg RTF|
-|------:|------------:|--------------:|--------------:|--------------:|--------------:|----------------:|---------------:|----------:|
-|    1 | FP16   |     0.193 |   0.194 |   0.194 |   0.194 |       902,960 |      2.35 | 40.95 |
-|    4 | FP16   |     0.610 |   0.613 |   0.613 |   0.614 |     1,141,207 |      2.78 | 12.94 |
-|    8 | FP16   |     1.157 |   1.161 |   1.161 |   1.162 |     1,201,684 |      2.68 |  6.81 |
-|    1 | FP32   |     0.453 |   0.455 |   0.456 |   0.457 |       385,027 |         - | 17.46 |
-|    4 | FP32   |     1.696 |   1.703 |   1.705 |   1.707 |       411,124 |         - |  4.66 |
-|    8 | FP32   |     3.111 |   3.118 |   3.120 |   3.122 |       448,275 |         - |  2.54 |
-
-##### Inference performance: NVIDIA T4
-
-Our results were obtained by running the `./scripts/inference_benchmark.sh` script in the PyTorch 20.06-py3 NGC container.
-The input utterance has 128 characters, synthesized audio has 8.05 s.
-
-|Batch size|Precision|Avg latency (s)|Latency tolerance interval 90% (s)|Latency tolerance interval 95% (s)|Latency tolerance interval 99% (s)|Throughput (samples/sec)|Speed-up with mixed precision|Avg RTF|
-|-----:|-------:|----------:|--------:|--------:|--------:|-------------:|----------:|------:|
-|    1 | FP16   |     0.533 |   0.540 |   0.541 |   0.543 |      326,471 |      2.56 | 14.81 |
-|    4 | FP16   |     2.292 |   2.302 |   2.304 |   2.308 |      304,283 |      2.38 |  3.45 |
-|    8 | FP16   |     4.564 |   4.578 |   4.580 |   4.585 |      305,568 |      1.99 |  1.73 |
-|    1 | FP32   |     1.365 |   1.383 |   1.387 |   1.394 |      127,765 |         - |  5.79 |
-|    4 | FP32   |     5.192 |   5.214 |   5.218 |   5.226 |      134,309 |         - |  1.52 |
-|    8 | FP32   |     9.09  |   9.11  |   9.114 |   9.122 |      153,434 |         - |  0.87 |
-
-</details>
-
+There are several options for manipulating predicted audio, for example
+adjusting the pace of output speech or transforming the predicted pitch
+contours. See the original
+[FastPitch v1.0 README](https://github.com/NVIDIA/DeepLearningExamples/tree/49e23b4597a6fca461321a085d8eb8abf1e215e2/PyTorch/SpeechSynthesis/FastPitch#inference-process)
+for examples.
