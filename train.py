@@ -403,7 +403,8 @@ def main():
 
     model.train()
 
-    torch.cuda.synchronize()
+    if args.cuda:
+        torch.cuda.synchronize()
     for epoch in range(start_epoch, args.epochs + 1):
         epoch_start_time = time.perf_counter()
 
