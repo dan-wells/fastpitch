@@ -93,7 +93,7 @@ Additional notes:
       handles such strings, e.g. transcripts like `ðə kæt`
 - If you want to use phonological feature vectors as input (`--input-type pf`),
   transcripts should be phone strings, with symbols specified by `--symbol-set`
-  as above
+  as above. We convert each symbol to PF vectors using PanPhon.
 - `unit` is intended for use with integer symbol IDs, e.g. k-means acoustic
   cluster IDs extracted from raw audio using a self-supervised model such as
   [HuBERT](https://ieeexplore.ieee.org/document/9414460)
@@ -234,7 +234,7 @@ For a multi-speaker FastPitch model, pass `--n-speakers` to match the value used
 with `train.py` and specify a target speaker ID using `--speaker N` to
 synthesize all utterances in the same target speaker's voice. If `test_meta.tsv`
 includes a `speaker` field then this will take precedence, and individual
-utterances can be synthesized each using a differen't speaker's voice.
+utterances can be synthesized each using a different speaker's voice.
 
 ### Vocoder options
 
