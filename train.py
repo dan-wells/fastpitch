@@ -250,6 +250,10 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size,
                     val_meta[k] += v
                 val_num_frames = num_frames.item()
 
+            # plot predicted spectrograms for first few utterances
+            if i == 0:
+                spectrogram_to_tb(y_pred, total_iter, n=4, src='Predicted')
+
         val_meta = {k: v / len(valset) for k, v in val_meta.items()}
 
     val_meta['took'] = time.perf_counter() - tik
@@ -271,6 +275,21 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size,
     if was_training:
         model.train()
     return val_meta
+
+
+def spectrogram_to_tb(y, step, n=4, src='Predicted'):
+    """Add spectrogram plots to TB for n utterances from batch"""
+    n = min(n, len(y[0]))
+    if src == 'Predicted':
+        # y: mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred
+        mel_specs = y[0][:n].transpose(1, 2).cpu().numpy()
+        mel_lens = y[1][:n].squeeze().cpu().numpy().sum(axis=1) - 1
+    elif src == 'Reference':
+        # y: mel_padded, dur_padded, dur_lens, pitch_padded
+        mel_specs = y[0][:n].cpu().numpy()
+        mel_lens = y[1][:n].cpu().numpy().sum(axis=1) - 1
+    for i, (s, l) in enumerate(zip(mel_specs, mel_lens)):
+        logger.log_spectrogram_tb(step, '{}/spec_{}'.format(src, i), s[:, :l], tb_subset='val')
 
 
 def adjust_learning_rate(total_iter, opt, learning_rate, warmup_iters=None):
@@ -400,6 +419,17 @@ def main():
                               collate_fn=collate_fn)
 
     batch_to_gpu = data_functions.get_batch_to_gpu('FastPitch')
+
+    # plot reference spectrograms for first few validation utterances
+    val_sampler = DistributedSampler(valset) if distributed_run else None
+    val_loader = DataLoader(valset, num_workers=4, shuffle=False,
+                            sampler=val_sampler, batch_size=args.batch_size,
+                            pin_memory=False, collate_fn=collate_fn)
+    for i, val_ref_batch in enumerate(val_loader):
+        if i > 0:
+            break
+        _, y, _ = batch_to_gpu(val_ref_batch, collate_fn.symbol_type)
+        spectrogram_to_tb(y, total_iter, n=4, src='Reference')
 
     model.train()
 

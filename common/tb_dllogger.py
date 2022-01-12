@@ -3,6 +3,7 @@ import datetime
 import glob
 import os
 import re
+import matplotlib.pyplot as plt
 import numpy as np
 
 import torch
@@ -47,6 +48,13 @@ class TBLogger:
             for stat in ('max', 'min', 'mean'):
                 self.log_value(step, f'Gradients/{stat}', getattr(np, stat)(norms),
                                stat=stat)
+
+    def log_spectrogram(self, step, key, spectrogram):
+        fig, ax = plt.subplots(figsize=(10, 2))
+        im = ax.imshow(spectrogram,
+                       aspect='auto', origin='lower', interpolation='none')
+        fig.canvas.draw()
+        self.summary_writer.add_figure(key, fig, step)
 
 
 def unique_log_fpath(log_fpath):
@@ -153,6 +161,10 @@ def log(step, tb_total_steps=None, data={}, subset='train'):
 
 def log_grads_tb(tb_total_steps, grads, tb_subset='train'):
     tb_loggers[tb_subset].log_grads(tb_total_steps, grads)
+
+
+def log_spectrogram_tb(tb_total_steps, key, spectrogram, tb_subset='train'):
+    tb_loggers[tb_subset].log_spectrogram(tb_total_steps, key, spectrogram)
 
 
 def parameters(data, verbosity=0, tb_subset=None):
