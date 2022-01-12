@@ -126,6 +126,18 @@ def parse_args(parser):
     cond.add_argument('--n-speakers', type=int, default=1,
                       help='Condition on speaker, value > 1 enables trainable speaker embeddings.')
 
+    vocoder = parser.add_argument_group('log generated audio during training')
+    vocoder.add_argument('--hifigan-checkpoint', type=str, default='',
+                         help='Path to HiFi-GAN vocoder checkpoint')
+    vocoder.add_argument('--hifigan-config', type=str, default='hifigan/config/config_v1.json',
+                         help='Path to HiFi-GAN vocoder config file')
+    vocoder.add_argument('--sampling-rate', type=int, default=22050,
+                         help='Sampling rate for output audio')
+    vocoder.add_argument('--hop-length', type=int, default=256,
+                         help='STFT hop length for estimating audio length from mel size')
+    vocoder.add_argument('--audio-interval', type=int, default=5,
+                         help='Log generated audio and spectrograms every N epochs')
+
     distributed = parser.add_argument_group('distributed setup')
     distributed.add_argument('--local_rank', type=int, default=os.getenv('LOCAL_RANK', 0),
                              help='Rank of the process for multiproc. Do not set manually.')
@@ -220,9 +232,22 @@ def load_checkpoint(args, model, ema_model, optimizer, scaler, epoch,
         ema_model.load_state_dict(checkpoint['ema_state_dict'])
 
 
-def validate(model, epoch, total_iter, criterion, valset, batch_size,
-             collate_fn, distributed_run, batch_to_gpu, use_gt_durations=False,
-             ema=False):
+def load_vocoder(args, device):
+    """Load HiFi-GAN vocoder from checkpoint"""
+    checkpoint_data = torch.load(args.hifigan_checkpoint)
+    vocoder_config = models.get_model_config('HiFi-GAN', args)
+    vocoder = models.get_model('HiFi-GAN', vocoder_config, device)
+    vocoder.load_state_dict(checkpoint_data['generator'])
+    vocoder.remove_weight_norm()
+    vocoder.eval()
+    if args.amp:
+        vocoder.half()
+    return vocoder
+
+
+def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn,
+             distributed_run, batch_to_gpu, use_gt_durations=False, ema=False,
+             vocoder=None, sampling_rate=22050, hop_length=256, audio_interval=5):
     """Handles all the validation scoring and printing"""
     was_training = model.training
     model.eval()
@@ -250,9 +275,12 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size,
                     val_meta[k] += v
                 val_num_frames = num_frames.item()
 
-            # plot predicted spectrograms for first few utterances
-            if i == 0:
-                spectrogram_to_tb(y_pred, total_iter, n=4, src='Predicted')
+            # log spectrograms and generated audio for first few utterances
+            if (i == 0) and (epoch % audio_interval == 0 if epoch is not None else True):
+                plot_spectrograms(y_pred, total_iter, n=4, src='Predicted')
+                if vocoder is not None:
+                    generate_audio(y_pred, total_iter, vocoder, sampling_rate,
+                                   hop_length, n=4, src='Predicted')
 
         val_meta = {k: v / len(valset) for k, v in val_meta.items()}
 
@@ -277,8 +305,8 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size,
     return val_meta
 
 
-def spectrogram_to_tb(y, step, n=4, src='Predicted'):
-    """Add spectrogram plots to TB for n utterances from batch"""
+def plot_spectrograms(y, step, n=4, src='Predicted'):
+    """Plot spectrograms for n utterances in batch"""
     n = min(n, len(y[0]))
     if src == 'Predicted':
         # y: mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred
@@ -289,7 +317,30 @@ def spectrogram_to_tb(y, step, n=4, src='Predicted'):
         mel_specs = y[0][:n].cpu().numpy()
         mel_lens = y[1][:n].cpu().numpy().sum(axis=1) - 1
     for i, (s, l) in enumerate(zip(mel_specs, mel_lens)):
-        logger.log_spectrogram_tb(step, '{}/spec_{}'.format(src, i), s[:, :l], tb_subset='val')
+        mel_spec = s[:, :l]
+        logger.log_spectrogram_tb(step, '{}/spec_{}'.format(src, i), mel_spec,
+                                  tb_subset='val')
+
+
+def generate_audio(y, step, vocoder=None, sampling_rate=22050, hop_length=256,
+                   n=4, src='Predicted'):
+    """Generate audio from spectrograms for n utterances in batch"""
+    n = min(n, len(y[0]))
+    with torch.no_grad():
+        if src == 'Predicted':
+            # y: mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred
+            audios = vocoder(y[0].transpose(1, 2)).cpu()
+            mel_lens = y[1][:n].squeeze().cpu().numpy().sum(axis=1) - 1
+        elif src == 'Reference':
+            # y: mel_padded, dur_padded, dur_lens, pitch_padded
+            audios = vocoder(y[0]).cpu()
+            mel_lens = y[1][:n].cpu().numpy().sum(axis=1) - 1
+    audios = audios.squeeze()
+    for i, (a, l) in enumerate(zip(audios, mel_lens)):
+        audio = a[:l * hop_length]
+        audio = audio / torch.max(torch.abs(audio))
+        logger.log_audio_tb(step, '{}/wav_{}'.format(src, i), audio, sampling_rate,
+                            tb_subset='val')
 
 
 def adjust_learning_rate(total_iter, opt, learning_rate, warmup_iters=None):
@@ -420,16 +471,23 @@ def main():
 
     batch_to_gpu = data_functions.get_batch_to_gpu('FastPitch')
 
-    # plot reference spectrograms for first few validation utterances
+    vocoder = None
+    if args.hifigan_checkpoint:
+        vocoder = load_vocoder(args, device)
+
+    # log spectrograms and generated audio for first few validation utterances
     val_sampler = DistributedSampler(valset) if distributed_run else None
     val_loader = DataLoader(valset, num_workers=4, shuffle=False,
                             sampler=val_sampler, batch_size=args.batch_size,
                             pin_memory=False, collate_fn=collate_fn)
-    for i, val_ref_batch in enumerate(val_loader):
+    for i, batch in enumerate(val_loader):
         if i > 0:
             break
-        _, y, _ = batch_to_gpu(val_ref_batch, collate_fn.symbol_type)
-        spectrogram_to_tb(y, total_iter, n=4, src='Reference')
+        _, y, _ = batch_to_gpu(batch, collate_fn.symbol_type)
+        plot_spectrograms(y, total_iter, n=4, src='Reference')
+        if vocoder is not None:
+            generate_audio(y, total_iter, vocoder, args.sampling_rate,
+                           args.hop_length, n=4, src='Reference')
 
     model.train()
 
@@ -572,13 +630,16 @@ def main():
         )
 
         validate(model, epoch, total_iter, criterion, valset, args.batch_size,
-                 collate_fn, distributed_run, batch_to_gpu,
-                 use_gt_durations=True)
+                 collate_fn, distributed_run, batch_to_gpu, use_gt_durations=True,
+                 vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length,
+                 audio_interval=args.audio_interval)
 
         if args.ema_decay > 0:
             validate(ema_model, epoch, total_iter, criterion, valset,
                      args.batch_size, collate_fn, distributed_run, batch_to_gpu,
-                     use_gt_durations=True, ema=True)
+                     use_gt_durations=True, ema=True, vocoder=vocoder,
+                     sampling_rate=args.sampling_rate, hop_length=args.hop_length,
+                     audio_interval=args.audio_interval)
 
         maybe_save_checkpoint(args, model, ema_model, optimizer, scaler,
                               epoch, total_iter, model_config)
@@ -599,7 +660,8 @@ def main():
                    ('Time/Iter time', epoch_time)]),
     )
     validate(model, None, total_iter, criterion, valset, args.batch_size,
-             collate_fn, distributed_run, batch_to_gpu, use_gt_durations=True)
+             collate_fn, distributed_run, batch_to_gpu, use_gt_durations=True,
+             vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length)
 
 
 if __name__ == '__main__':

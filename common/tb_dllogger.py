@@ -56,6 +56,9 @@ class TBLogger:
         fig.canvas.draw()
         self.summary_writer.add_figure(key, fig, step)
 
+    def log_audio(self, step, key, audio, sampling_rate):
+        self.summary_writer.add_audio(key, audio, step, sampling_rate)
+
 
 def unique_log_fpath(log_fpath):
     if not os.path.isfile(log_fpath):
@@ -165,6 +168,10 @@ def log_grads_tb(tb_total_steps, grads, tb_subset='train'):
 
 def log_spectrogram_tb(tb_total_steps, key, spectrogram, tb_subset='train'):
     tb_loggers[tb_subset].log_spectrogram(tb_total_steps, key, spectrogram)
+
+
+def log_audio_tb(tb_total_steps, key, audio, sampling_rate, tb_subset='train'):
+    tb_loggers[tb_subset].log_audio(tb_total_steps, key, audio, sampling_rate)
 
 
 def parameters(data, verbosity=0, tb_subset=None):
