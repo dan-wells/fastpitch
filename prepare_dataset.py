@@ -170,6 +170,11 @@ def parse_textgrid(tier, sampling_rate, hop_length):
                 phones.append("sp")
         durations.append(int(np.ceil(e * sampling_rate / hop_length)
                              - np.ceil(s * sampling_rate / hop_length)))
+    n_samples = end_time * sampling_rate
+    n_frames = n_samples / hop_length
+    # fix occasional length mismatches at the end of utterances
+    if n_frames == int(n_frames):
+        durations[-1] += 1
     return phones, durations, start_time, end_time
 
 
