@@ -56,15 +56,15 @@ def parse_args(parser):
                         type=str, help='Path to file with audio paths and text')
     parser.add_argument('--output-meta-file', default=None, type=str,
                         help='Write metadata file pointing to extracted features')
-    parser.add_argument('--text-cleaners', nargs='*',
-                        default=['english_cleaners'], type=str,
-                        help='Type of text cleaners for input text')
-    parser.add_argument('--symbol-set', type=str, default='english_basic',
-                        help='Define symbol set for input text')
     parser.add_argument('--input-type', type=str, default='char',
                         choices=['char', 'phone', 'unit'],
                         help='Input symbols used, either char (text), phone '
                         'or quantized unit symbols.')
+    parser.add_argument('--symbol-set', type=str, default='english_basic',
+                        help='Define symbol set for input text')
+    parser.add_argument('--text-cleaners', nargs='*',
+                        default=['english_cleaners'], type=str,
+                        help='Type of text cleaners for input text')
     parser.add_argument('--max-wav-value', default=32768.0, type=float,
                         help='Maximum audiowave value')
     parser.add_argument('--peak-norm', action='store_true',
