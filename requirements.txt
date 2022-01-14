@@ -4,7 +4,6 @@ librosa
 matplotlib
 numpy
 panphon
-praat-parselmouth
 scipy
 tensorboard
 tensorboardX
