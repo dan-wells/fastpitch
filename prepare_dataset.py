@@ -88,6 +88,9 @@ def parse_args(parser):
                         help='Minimum frequency for pitch extraction')
     parser.add_argument('--pitch-fmax', default=600.0, type=float,
                         help='Maximum frequency for pitch extraction')
+    parser.add_argument('--pitch-method', default='yin', choices=['yin', 'pyin'],
+                        help='Method to use for pitch extraction. Probabilistic YIN '
+                        '(pyin) is more accurate but also much slower.')
     parser.add_argument('--durations-from', type=str, default='',
                         choices=['textgrid', 'unit_rle'],
                         help='Extract symbol durations from Praat TextGrids or '
@@ -225,23 +228,24 @@ def run_length_encode(symbols):
 
 
 def extract_pitches(pitch_vecs, durations, fnames, dataset_path, trim_silences,
-                    start_times, end_times, fmin=50, fmax=600, sr=None, hop_length=256):
+                    start_times, end_times, fmin=50, fmax=600, sr=None,
+                    hop_length=256, method='yin'):
     for j, dur in enumerate(durations):
         fpath = os.path.join(dataset_path, 'pitches', fnames[j] + '.pt')
         wav = os.path.join(dataset_path, 'wavs', fnames[j] + '.wav')
         if trim_silences is not None:
             p_char = calculate_pitch(
                 str(wav), dur.cpu().numpy(), fmin, fmax, sr, hop_length,
-                start_times[j], end_times[j])
+                method, start_times[j], end_times[j])
         else:
             p_char = calculate_pitch(
-                str(wav), dur.cpu().numpy(), fmin, fmax, sr, hop_length)
+                str(wav), dur.cpu().numpy(), fmin, fmax, sr, hop_length, method)
         pitch_vecs[fnames[j]] = p_char
     return pitch_vecs
 
 
 def calculate_pitch(wav, durs, fmin=50, fmax=600, sr=None, hop_length=256,
-                    start=None, end=None):
+                    method='yin', start=None, end=None):
     mel_len = durs.sum()
     durs_cum = np.cumsum(np.pad(durs, (1, 0)))
     try:
@@ -251,10 +255,11 @@ def calculate_pitch(wav, durs, fmin=50, fmax=600, sr=None, hop_length=256,
         trimmed_dur = end
     snd, sr = librosa.load(wav, sr=sr, offset=start, duration=trimmed_dur)
 
-    # TODO: Add support for librosa.pyin. This is very slow, so wait until we
-    # pull in data prep parallel processing from upstream. All options should
-    # be the same, just add fill_na=0.0
-    pitch = librosa.yin(snd, fmin, fmax, sr=sr, hop_length=hop_length)
+    if method == 'yin':
+        pitch = librosa.yin(snd, fmin, fmax, sr=sr, hop_length=hop_length)
+    elif method == 'pyin':
+        pitch, voiced_flags, voiced_probs  = librosa.pyin(
+            snd, fmin, fmax, sr=sr, hop_length=hop_length, fill_na=0.0)
     assert np.abs(mel_len - pitch.shape[0]) <= 1.0
 
     # Average pitch over characters
@@ -398,7 +403,8 @@ def main():
         pitch_vecs = extract_pitches(
             pitch_vecs, durations, fnames, args.dataset_path,
             args.trim_silences, start_times, end_times,
-            args.pitch_fmin, args.pitch_fmax, args.sampling_rate, args.hop_length)
+            args.pitch_fmin, args.pitch_fmax, args.sampling_rate, args.hop_length,
+            args.pitch_method)
 
         if args.trim_silences is not None:
             pitch_vecs, metadata = trim_silences(
