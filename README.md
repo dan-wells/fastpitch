@@ -118,7 +118,7 @@ input symbols also specified at the frame level by run-length encoding. This is
 the expected method to extract duration targets from HuBERT code sequences when
 using `--input-type unit`, for example.
 
-### Audio feature extraction
+### Acoustic feature extraction
 
 Mel spectrogram feature extraction is defined by several parameters passed to
 `prepare_dataset.py`:
@@ -131,7 +131,7 @@ Mel spectrogram feature extraction is defined by several parameters passed to
 - `--mel-f{min,max}`, minimum and maximum frequency of mel filter bank bins
   (defaults 0, 8000)
 
-These parameters define the frequency and time resolution of audio feature
+These parameters define the frequency and time resolution of acoustic feature
 extraction. Each frequency bin in the FFT analysis window spans `sampling-rate /
 filter-length` Hz, and each analysis window covers `filter-length /
 sampling-rate` seconds of audio. For the default values specified above, this
