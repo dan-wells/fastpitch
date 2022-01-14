@@ -93,6 +93,16 @@ def get_symbols(symbol_set='english_basic', symbol_type=None):
         _oov = ['spn']
         _phones = arpabet_symbols
         symbols = _pad + _silence + _oov + _phones
+    elif symbol_set == 'globalphone':
+        _pad = ['_']
+        _silence = ['sil', 'sp']
+        _oov = ['spn']
+        _phones = [
+            'AE', 'AX', 'A~', 'B', 'D', 'E', 'EU', 'E~', 'F', 'G', 'H', 'J',
+            'K', 'L', 'M', 'N', 'NG', 'NJ', 'O', 'OE', 'OE~', 'P', 'R', 'S',
+            'SH', 'T', 'V', 'W', 'Z', 'ZH', 'a', 'e', 'i', 'o', 'o~', 'u', 'y'
+        ]
+        symbols = _pad + _silence + _oov + _phones
     else:
         raise Exception("{} symbol set does not exist".format(symbol_set))
 

@@ -62,12 +62,9 @@ class PhoneProcessing(object):
                     feats.extend(pf_vecs)
             return feats
         else:
-            if self.symbol_set in ['xsampa', 'combilex', 'arpabet']:
-                # Assuming space-delimited phone strings, e.g. 'sp D @ k { t sp'
-                return [self.symbol_to_id[s] for s in text.split(' ')]
             # TODO: could also handle X-SAMPA this way if mapping through IPA
             # using panphon
-            elif self.symbol_set.startswith('ipa'):
+            if self.symbol_set.startswith('ipa'):
                 # Text can be either space-delimited phone strings or phonetized
                 # words, e.g. 'sp ðə kæt sp'
                 symbol_ids = []
@@ -78,6 +75,9 @@ class PhoneProcessing(object):
                         for s in self.ft.ipa_segs(word):
                             symbol_ids.append(self.symbol_to_id[s])
                 return symbol_ids
+            else:
+                # Assuming space-delimited phone strings, e.g. 'sp D @ k { t sp'
+                return [self.symbol_to_id[s] for s in text.split(' ')]
 
 
 class TextProcessing(object):
