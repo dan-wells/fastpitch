@@ -30,7 +30,7 @@ import json
 import os
 import time
 
-import parselmouth
+import librosa
 import tgt
 import torch
 import dllogger as DLLogger
@@ -83,6 +83,10 @@ def parse_args(parser):
                         help='Minimum mel frequency')
     parser.add_argument('--mel-fmax', default=8000.0, type=float,
                         help='Maximum mel frequency')
+    parser.add_argument('--pitch-fmin', default=50.0, type=float,
+                        help='Minimum frequency for pitch extraction')
+    parser.add_argument('--pitch-fmax', default=600.0, type=float,
+                        help='Maximum frequency for pitch extraction')
     parser.add_argument('--durations-from', type=str, default='',
                         choices=['textgrid', 'unit_rle'],
                         help='Extract symbol durations from Praat TextGrids or '
@@ -220,25 +224,36 @@ def run_length_encode(symbols):
 
 
 def extract_pitches(pitch_vecs, durations, fnames, dataset_path, trim_silences,
-                    start_times, end_times):
+                    start_times, end_times, fmin=50, fmax=600, sr=None, hop_length=256):
     for j, dur in enumerate(durations):
         fpath = os.path.join(dataset_path, 'pitches', fnames[j] + '.pt')
         wav = os.path.join(dataset_path, 'wavs', fnames[j] + '.wav')
         if trim_silences is not None:
-            p_char = calculate_pitch(str(wav), dur.cpu().numpy(), start_times[j], end_times[j])
+            p_char = calculate_pitch(
+                str(wav), dur.cpu().numpy(), fmin, fmax, sr, hop_length,
+                start_times[j], end_times[j])
         else:
-            p_char = calculate_pitch(str(wav), dur.cpu().numpy())
+            p_char = calculate_pitch(
+                str(wav), dur.cpu().numpy(), fmin, fmax, sr, hop_length)
         pitch_vecs[fnames[j]] = p_char
     return pitch_vecs
 
 
-def calculate_pitch(wav, durs, start=None, end=None):
+def calculate_pitch(wav, durs, fmin=50, fmax=600, sr=None, hop_length=256,
+                    start=None, end=None):
     mel_len = durs.sum()
     durs_cum = np.cumsum(np.pad(durs, (1, 0)))
-    snd = parselmouth.Sound(wav)
-    snd = snd.extract_part(from_time=start, to_time=end)
-    pitch = snd.to_pitch(time_step=snd.duration / (mel_len + 3)
-                         ).selected_array['frequency']
+    try:
+        trimmed_dur = end - start
+    except TypeError:
+        # either start or end is None => don't need to calculate final duration
+        trimmed_dur = end
+    snd, sr = librosa.load(wav, sr=sr, offset=start, duration=trimmed_dur)
+
+    # TODO: Add support for librosa.pyin. This is very slow, so wait until we
+    # pull in data prep parallel processing from upstream. All options should
+    # be the same, just add fill_na=0.0
+    pitch = librosa.yin(snd, fmin, fmax, sr=sr, hop_length=hop_length)
     assert np.abs(mel_len - pitch.shape[0]) <= 1.0
 
     # Average pitch over characters
@@ -381,7 +396,9 @@ def main():
                 mel_lens, fnames, texts_padded, text_lens, metadata)
 
         pitch_vecs = extract_pitches(
-            pitch_vecs, durations, fnames, args.dataset_path, args.trim_silences, start_times, end_times)
+            pitch_vecs, durations, fnames, args.dataset_path,
+            args.trim_silences, start_times, end_times,
+            args.pitch_fmin, args.pitch_fmax, args.sampling_rate, args.hop_length)
 
         if args.trim_silences is not None:
             pitch_vecs, metadata = trim_silences(
