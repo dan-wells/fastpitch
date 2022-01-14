@@ -37,6 +37,7 @@ import dllogger as DLLogger
 import numpy as np
 from dllogger import StdOutBackend, JSONStreamBackend, Verbosity
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from common import utils
 from tacotron2.data_function import TextMelLoader, TextMelCollate, batch_to_gpu
@@ -376,8 +377,7 @@ def main():
                              sampler=None, num_workers=0,
                              collate_fn=TextMelCollate(1),
                              pin_memory=False, drop_last=False)
-    for i, batch in enumerate(data_loader):
-        tik = time.time()
+    for i, batch in enumerate(tqdm(data_loader, 'Processing audio files')):
         fnames = batch[-1]
         x, _, _ = batch_to_gpu(batch[:-1])
         texts_padded, text_lens, mels_padded, _, mel_lens = x
@@ -404,9 +404,6 @@ def main():
             pitch_vecs, metadata = trim_silences(
                 args.trim_silences, args.sampling_rate, args.hop_length, fnames, args.dataset_path,
                 mel_lens, mels_padded, durations, pitch_vecs, texts, metadata)
-
-        nseconds = time.time() - tik
-        DLLogger.log(step=f'{i+1}/{len(data_loader)} ({nseconds:.2f}s)', data={})
 
     mean, std = normalize_pitch_vectors(pitch_vecs)
     for fname, pitch in pitch_vecs.items():
