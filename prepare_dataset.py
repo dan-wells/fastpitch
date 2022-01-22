@@ -186,7 +186,7 @@ def parse_textgrid(tier, sampling_rate, hop_length):
     return phones, durations, start_time, end_time
 
 
-def extract_durs_from_unit_sequences(mel_lens, fnames, texts_padded, text_lens, metadata):
+def extract_durs_from_unit_sequences(mel_lens, fnames, dataset_path, texts_padded, text_lens, metadata):
     durations = []
     for j, mel_len in enumerate(mel_lens):
         text = texts_padded[j][:text_lens[j]].cpu().numpy()
@@ -398,7 +398,7 @@ def main():
                 metadata)
         elif args.durations_from == 'unit_rle':
             durations, metadata = extract_durs_from_unit_sequences(
-                mel_lens, fnames, texts_padded, text_lens, metadata)
+                mel_lens, fnames, args.dataset_path, texts_padded, text_lens, metadata)
 
         pitch_vecs = extract_pitches(
             pitch_vecs, durations, fnames, args.dataset_path,
