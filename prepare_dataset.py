@@ -180,7 +180,8 @@ def parse_textgrid(tier, sampling_rate, hop_length):
                              - np.ceil(s * sampling_rate / hop_length)))
     n_samples = end_time * sampling_rate
     n_frames = n_samples / hop_length
-    # fix occasional length mismatches at the end of utterances
+    # fix occasional length mismatches at the end of utterances when
+    # duration in samples is an integer multiple of hop_length
     if n_frames == int(n_frames):
         durations[-1] += 1
     return phones, durations, start_time, end_time
@@ -194,16 +195,13 @@ def extract_durs_from_unit_sequences(mel_lens, fnames, dataset_path, texts_padde
         units, durs = (list(i) for i in zip(*rle_text))  # unpack list of tuples to two sequences
         total_dur = sum(durs)
         if total_dur != mel_len:
+            # Extracted HuBERT feature sequences are frequently 1-frame short
+            # because they truncate rather than padding utterances whose
+            # durations in samples are not integer multiples of hop_length. If
+            # duration is also an integer multiple of FFT filter length, we
+            # lose an additional frame (2 frames short) -- catch both cases here
             dur_diff = mel_len - total_dur
             durs[-1] += dur_diff
-            # TODO: Work out why some utterances are 2 frames short.
-            # Expected for extracted HuBERT feature sequences to be
-            # consistently 1-frame short because they truncate rather than
-            # padding utterances which don't exactly fit into 0.02 s chunks,
-            # but not sure where this extra missing frame comes from
-            if dur_diff != 1:
-                DLLogger.log(step="Feature length mismatch {}: {} mels, {} durs".format(
-                    fnames[j], mel_len, total_dur), data={})
         assert sum(durs) == mel_len, f'Length mismatch: {fnames[j]}, {sum(durs)} != {mel_len}'
         dur = torch.LongTensor(durs)
         durations.append(dur)
