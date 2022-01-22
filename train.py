@@ -35,6 +35,7 @@ import time
 import warnings
 from collections import defaultdict, OrderedDict
 
+import librosa
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -45,7 +46,6 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch_optimizer import Lamb
 
-import common
 import common.tb_dllogger as logger
 import data_functions
 import loss_functions
@@ -277,10 +277,16 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
 
             # log spectrograms and generated audio for first few utterances
             if (i == 0) and (epoch % audio_interval == 0 if epoch is not None else True):
-                plot_spectrograms(y_pred, total_iter, n=4, src='Predicted')
+                # TODO: sort utterances by mel length rather than more variable text length
+                # for consistent sample across different experiments
+                batch_audiopaths_and_text = sorted(valset.audiopaths_and_text[:batch_size],
+                                                   key=lambda x: len(valset.get_text(x[3])),
+                                                   reverse=True)
+                tb_fnames = [i[0] for i in batch_audiopaths_and_text]
+                plot_spectrograms(y_pred, tb_fnames, total_iter, n=4, label='Predicted spectrogram')
                 if vocoder is not None:
-                    generate_audio(y_pred, total_iter, vocoder, sampling_rate,
-                                   hop_length, n=4, src='Predicted')
+                    generate_audio(y_pred, tb_fnames, total_iter, vocoder, sampling_rate,
+                                   hop_length, n=4, label='Predicted audio')
 
         val_meta = {k: v / len(valset) for k, v in val_meta.items()}
 
@@ -305,41 +311,51 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
     return val_meta
 
 
-def plot_spectrograms(y, step, n=4, src='Predicted'):
+def plot_spectrograms(y, fnames, step, n=4, label='Predicted spectrogram'):
     """Plot spectrograms for n utterances in batch"""
     n = min(n, len(y[0]))
-    if src == 'Predicted':
+    fnames = fnames[:n]
+    if label == 'Predicted spectrogram':
         # y: mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred
         mel_specs = y[0][:n].transpose(1, 2).cpu().numpy()
         mel_lens = y[1][:n].squeeze().cpu().numpy().sum(axis=1) - 1
-    elif src == 'Reference':
+    elif label == 'Reference spectrogram':
         # y: mel_padded, dur_padded, dur_lens, pitch_padded
         mel_specs = y[0][:n].cpu().numpy()
         mel_lens = y[1][:n].cpu().numpy().sum(axis=1) - 1
-    for i, (s, l) in enumerate(zip(mel_specs, mel_lens)):
-        mel_spec = s[:, :l]
-        logger.log_spectrogram_tb(step, '{}/spec_{}'.format(src, i), mel_spec,
+    for mel_spec, mel_len, fname in zip(mel_specs, mel_lens, fnames):
+        mel_spec = mel_spec[:, :mel_len]
+        utt_id = os.path.splitext(os.path.basename(fname))[0]
+        logger.log_spectrogram_tb(step, '{}/{}'.format(label, utt_id), mel_spec,
                                   tb_subset='val')
 
 
-def generate_audio(y, step, vocoder=None, sampling_rate=22050, hop_length=256,
-                   n=4, src='Predicted'):
+def generate_audio(y, fnames, step, vocoder=None, sampling_rate=22050, hop_length=256,
+                   n=4, label='Predicted audio'):
     """Generate audio from spectrograms for n utterances in batch"""
     n = min(n, len(y[0]))
+    fnames = fnames[:n]
     with torch.no_grad():
-        if src == 'Predicted':
+        if label == 'Predicted audio':
             # y: mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred
-            audios = vocoder(y[0].transpose(1, 2)).cpu()
+            audios = vocoder(y[0].transpose(1, 2)).cpu().squeeze().numpy()
             mel_lens = y[1][:n].squeeze().cpu().numpy().sum(axis=1) - 1
-        elif src == 'Reference':
+        elif label == 'Copy synthesis':
             # y: mel_padded, dur_padded, dur_lens, pitch_padded
-            audios = vocoder(y[0]).cpu()
+            audios = vocoder(y[0]).cpu().squeeze().numpy()
             mel_lens = y[1][:n].cpu().numpy().sum(axis=1) - 1
-    audios = audios.squeeze()
-    for i, (a, l) in enumerate(zip(audios, mel_lens)):
-        audio = a[:l * hop_length]
-        audio = audio / torch.max(torch.abs(audio))
-        logger.log_audio_tb(step, '{}/wav_{}'.format(src, i), audio, sampling_rate,
+        elif label == 'Reference audio':
+            audios = []
+            for fname in fnames:
+                wav = re.sub(r'mels/(.+)\.pt', r'wavs/\1.wav', fname)
+                audio, _ = librosa.load(wav, sr=sampling_rate)
+                audios.append(audio)
+            mel_lens = y[1][:n].cpu().numpy().sum(axis=1) - 1
+    for audio, mel_len, fname in zip(audios, mel_lens, fnames):
+        audio = audio[:mel_len * hop_length]
+        audio = audio / np.max(np.abs(audio))
+        utt_id = os.path.splitext(os.path.basename(fname))[0]
+        logger.log_audio_tb(step, '{}/{}'.format(label, utt_id), audio, sampling_rate,
                             tb_subset='val')
 
 
@@ -484,10 +500,18 @@ def main():
         if i > 0:
             break
         _, y, _ = batch_to_gpu(batch, collate_fn.symbol_type)
-        plot_spectrograms(y, total_iter, n=4, src='Reference')
+        # TODO: sort utterances by mel length rather than more variable text length
+        # for consistent sample across different experiments
+        batch_audiopaths_and_text = sorted(valset.audiopaths_and_text[:args.batch_size],
+                                           key=lambda x: len(valset.get_text(x[3])),
+                                           reverse=True)
+        tb_fnames = [i[0] for i in batch_audiopaths_and_text]
+        plot_spectrograms(y, tb_fnames, total_iter, n=4, label='Reference spectrogram')
         if vocoder is not None:
-            generate_audio(y, total_iter, vocoder, args.sampling_rate,
-                           args.hop_length, n=4, src='Reference')
+            generate_audio(y, tb_fnames, total_iter, vocoder, args.sampling_rate,
+                           args.hop_length, n=4, label='Reference audio')
+            generate_audio(y, tb_fnames, total_iter, vocoder, args.sampling_rate,
+                           args.hop_length, n=4, label='Copy synthesis')
 
     model.train()
 
