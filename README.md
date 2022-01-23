@@ -156,6 +156,19 @@ Additional options are available for applying peak normalization to audio data
 (for example if it was collected across multiple recording sessions) or for
 trimming excessive leading or trailing silences found during forced alignment.
 
+### Pitch estimation
+
+We default to the
+[YIN algorithm](https://librosa.org/doc/main/generated/librosa.yin.html)
+for fundamental frequency estimation. Framewise estimates are averaged per input
+symbol for easier interpretation and more stable performance.
+
+We also have an option to use the more accurate
+[probabilistic YIN](https://librosa.org/doc/main/generated/librosa.pyin.html),
+but this algorithm runs consderably slower. If you know the expected pitch range
+in your data, then you can narrow the corresponding hypothesis space for pYIN by
+adjusting `--pitch-f{min,max}` (defaults 50--600 Hz) to speed things up a bit.
+
 ## Model training
 
 To train a phone-based system from IPA transcripts, after preparing a dataset
@@ -183,7 +196,8 @@ distributed training.
 
 For multi-speaker data, specify `--n-speakers N` to learn additional speaker
 embeddings. Input metadata files should then include integer speaker IDs as the
-final field on each line, with IDs ranging between [0, `n-speakers` - 1].
+final field on each line, with IDs ranging between [0, `n-speakers` - 1]. You
+can assign integer speaker IDs using `scripts/add_speaker_id_to_meta.py`.
 
 ## Synthesizing speech
 
@@ -274,12 +288,11 @@ e.g. `--dataset-path $DATA_ROOT` to `inference.py`.
 
 A similar method can be used to generate time-aligned synthetic data for vocoder
 fine-tuning, i.e. predicting ground-truth audio from errorful mel spectrograms
-predicted by a FastPitch model. In that case, you need only use reference
-durations in synthesis, and probably also pitch contours to further limit
-sources of variation from reference audio. Use `--save-mels` to save predicted
-mel spectrograms to disk, either to filepaths specified in the `{mel_,}output`
-field of `test_meta.tsv`, else to sequential files like `$OUTPUT_DIR/mel_1.wav`
-if not specified.
+predicted by a FastPitch model. In that case, you should pass reference
+durations and pitch contours during synthesis to limit variation from reference
+audio. Use `--save-mels` to save predicted mel spectrograms to disk, either to
+filepaths specified in the `{mel_,}output` field of `test_meta.tsv`, else to
+sequential files like `$OUTPUT_DIR/mel_1.wav` if not specified.
 
 ### Audio transforms
 
