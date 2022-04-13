@@ -84,7 +84,7 @@ def parse_args(parser):
                         help='Minimum mel frequency')
     parser.add_argument('--mel-fmax', default=8000.0, type=float,
                         help='Maximum mel frequency')
-    parser.add_argument('--pitch-fmin', default=50.0, type=float,
+    parser.add_argument('--pitch-fmin', default=40.0, type=float,
                         help='Minimum frequency for pitch extraction')
     parser.add_argument('--pitch-fmax', default=600.0, type=float,
                         help='Maximum frequency for pitch extraction')
@@ -226,7 +226,7 @@ def run_length_encode(symbols):
 
 
 def extract_pitches(pitch_vecs, durations, fnames, dataset_path, trim_silences,
-                    start_times, end_times, fmin=50, fmax=600, sr=None,
+                    start_times, end_times, fmin=40, fmax=600, sr=None,
                     hop_length=256, method='yin'):
     for j, dur in enumerate(durations):
         fpath = os.path.join(dataset_path, 'pitches', fnames[j] + '.pt')
@@ -242,7 +242,7 @@ def extract_pitches(pitch_vecs, durations, fnames, dataset_path, trim_silences,
     return pitch_vecs
 
 
-def calculate_pitch(wav, durs, fmin=50, fmax=600, sr=None, hop_length=256,
+def calculate_pitch(wav, durs, fmin=40, fmax=600, sr=None, hop_length=256,
                     method='yin', start=None, end=None):
     mel_len = durs.sum()
     durs_cum = np.cumsum(np.pad(durs, (1, 0)))
