@@ -182,7 +182,7 @@ def parse_textgrid(tier, sampling_rate, hop_length):
     n_frames = n_samples / hop_length
     # fix occasional length mismatches at the end of utterances when
     # duration in samples is an integer multiple of hop_length
-    if n_frames == int(n_frames):
+    if n_frames.is_integer():
         durations[-1] += 1
     return phones, durations, start_time, end_time
 
