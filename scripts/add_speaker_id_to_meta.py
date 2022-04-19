@@ -52,10 +52,27 @@ def assign_speaker_ids(speakers, n_spkrs=0):
     if n_spkrs:
         assert len(speakers) == n_spkrs, \
             "Expected {} speakers, found {}".format(n_spkrs, len(speakers))
+    else:
+        print("Found {} speakers".format(len(speakers)))
     speaker_ids = {}
     for i, spkr in enumerate(sorted(speakers)):
         speaker_ids[spkr] = i
-    assert max(speaker_ids.values()) == n_spkrs - 1
+    if n_spkrs:
+        assert max(speaker_ids.values()) == n_spkrs - 1
+    return speaker_ids
+
+
+def load_speaker_list(speakers_in, n_spkrs=0):
+    speaker_ids = {}
+    with open(speakers_in) as inf:
+        for line in inf:
+            spkr, spkr_id = line.strip().split()
+            speaker_ids[spkr] = spkr_id
+    if n_spkrs:
+        assert len(speaker_ids) == n_spkrs, \
+            "Expected {} speakers, found {}".format(n_spkrs, len(speaker_ids))
+    else:
+        print("Found {} speakers".format(len(speaker_ids)))
     return speaker_ids
 
 
@@ -69,7 +86,14 @@ if __name__ == '__main__':
     args = parse_args()
 
     metadata, speakers = load_meta(args.meta_in, args.spkr_sep)
-    speaker_ids = assign_speaker_ids(speakers, args.n_spkrs)
+    if os.path.isfile(args.spkr_list):
+        # TODO: account for the case where spkr_list represents a subset
+        # of speakers in meta_in, i.e. we maintain those we see again and
+        # add new IDs for previously unseen speakers
+        speaker_ids = load_speaker_list(args.spkr_list, args.n_spkrs)
+    else:
+        speaker_ids = assign_speaker_ids(speakers, args.n_spkrs)
+        write_speaker_list(args.spkr_list, speaker_ids)
 
     utts = list(metadata.keys())
     if args.shuf:
@@ -77,4 +101,3 @@ if __name__ == '__main__':
         random.shuffle(utts)
 
     write_meta(args.meta_out, metadata, utts, speaker_ids, args.spkr_sep)
-    write_speaker_list(args.spkr_list, speaker_ids)
