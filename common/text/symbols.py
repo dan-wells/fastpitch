@@ -49,6 +49,17 @@ def get_symbols(symbol_set='english_basic', symbol_type=None):
         _accented = 'áçéêëñöøćž'
         _letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
         symbols = list(_pad + _punctuation + _math + _special + _accented + _letters) + _arpabet
+    elif symbol_set == 'english_basic_sil':
+        # this set is intended for use with character-level alignments,
+        # where the 'pronunciation' of each word is represented by
+        # space-separated characters in that word, e.g. 'cat' -> /c a t/.
+        # Use with `--input-type phone`.
+        _pad = '_'
+        _silence = ['sil', 'sp']
+        _punctuation = '!\'"(),.:;? '
+        _special = '-'
+        _letters = 'abcdefghijklmnopqrstuvwxyz'
+        symbols = list(_pad) + _silence + list(_special + _punctuation + _letters)
     elif symbol_set == 'ipa':
         ft = PermissiveFeatureTable()
         _pad = ['_']

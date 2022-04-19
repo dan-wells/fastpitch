@@ -80,6 +80,9 @@ class PhoneProcessing(object):
                 return [self.symbol_to_id[s] for s in text.split(' ')]
 
 
+# TODO: Handle simple text input with spaces between words, but expanding
+# to individual characters to match input lengths and durations with those
+# extracted from character-level TextGrid alignments, i.e.:
 class TextProcessing(object):
     def __init__(self, symbol_set, cleaner_names, p_arpabet=0.0,
                  handle_arpabet='word', handle_arpabet_ambiguous='ignore',

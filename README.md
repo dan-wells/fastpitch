@@ -73,6 +73,7 @@ are possible values for `--input-type` and second-level for `--symbol-set`:
     * `ipa`
     * `ipa_all`
     * `xsampa`
+    * `english_basic_sil`
 - `unit` (integer symbol IDs)
     * Size of symbol vocabulary
 
@@ -102,6 +103,17 @@ Additional notes:
     * Pass the size of the symbol vocabulary in `--symbol-set`; if this is e.g.
       100, we expect transcripts to be integer sequences like `79 3 14 14 25`,
       where possible individual symbol values are in the range [0, 99]
+- `english_basic_sil` is a special case: it is intended for use with
+  character-level alignments, where the pronunciation of each word is
+  represented by the characters in that word separated by spaces (e.g. 'cat'
+  &rarr; `c a t`), and also includes symbols for silence and short pauses
+  between words. This matches the handling of phone string inputs, so use
+  `--input-type phone` with this symbol set.
+    * **TODO:** This is really the only sensible way to synthesize from text
+      since we removed duration extraction from pre-trained character-input
+      Tacotron 2 models. `TextProcessing` should be updated to allow for more
+      intuitive text input while remaining consistent with durations extracted
+      from character-level TextGrid alignments.
 
 ### Forced alignment
 
