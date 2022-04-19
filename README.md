@@ -68,6 +68,7 @@ are possible values for `--input-type` and second-level for `--symbol-set`:
 - `phone` or `pf` (phonological feature vectors)
     * `arpabet`
     * `combilex`
+    * `unisyn`
     * `globalphone` (French subset)
     * `ipa`
     * `ipa_all`

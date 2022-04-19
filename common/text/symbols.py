@@ -103,6 +103,19 @@ def get_symbols(symbol_set='english_basic', symbol_type=None):
             'SH', 'T', 'V', 'W', 'Z', 'ZH', 'a', 'e', 'i', 'o', 'o~', 'u', 'y'
         ]
         symbols = _pad + _silence + _oov + _phones
+    elif symbol_set == 'unisyn':
+        _pad = ['_']
+        _silence = ['sil', 'sp']
+        _oov = ['spn']
+        _phones = [
+            '?', '@', 'a', 'aa', 'ae', 'aer', 'ai', 'ar', 'b', 'ch', 'd', 'dh',
+            'e', 'eh', 'ei', 'eir', 'er', 'f', 'g', 'h', 'hw', 'i', 'i@', 'ii',
+            'ir', 'iy', 'jh', 'k', 'l', 'l=', 'lw', 'm', 'm=', 'n', 'n=', 'ng',
+            'o', 'oi', 'oo', 'or', 'ou', 'our', 'ow', 'owr', 'p', 'r', '@r',
+            '@@r', 's', 'sh', 't', 't^', 'th', 'u', 'uh', 'ur', 'uu', 'uw',
+            'v', 'w', 'x', 'y', 'z', 'zh',
+        ]
+        symbols = _pad + _silence + _oov + _phones
     else:
         raise Exception("{} symbol set does not exist".format(symbol_set))
 
