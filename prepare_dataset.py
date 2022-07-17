@@ -254,10 +254,10 @@ def calculate_pitch(wav, durs, fmin=40, fmax=600, sr=None, hop_length=256,
     snd, sr = librosa.load(wav, sr=sr, offset=start, duration=trimmed_dur)
 
     if method == 'yin':
-        pitch = librosa.yin(snd, fmin, fmax, sr=sr, hop_length=hop_length)
+        pitch = librosa.yin(snd, fmin=fmin, fmax=fmax, sr=sr, hop_length=hop_length)
     elif method == 'pyin':
         pitch, voiced_flags, voiced_probs  = librosa.pyin(
-            snd, fmin, fmax, sr=sr, hop_length=hop_length, fill_na=0.0)
+            snd, fmin=fmin, fmax=fmax, sr=sr, hop_length=hop_length, fill_na=0.0)
     assert np.abs(mel_len - pitch.shape[0]) <= 1.0
 
     # Average pitch over characters
