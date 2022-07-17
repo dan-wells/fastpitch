@@ -39,6 +39,7 @@ import librosa
 import numpy as np
 import torch
 import torch.distributed as dist
+import torch.multiprocessing as mp
 from torch.cuda.amp import autocast, GradScaler
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim import Adam
@@ -139,10 +140,10 @@ def parse_args(parser):
                          help='Log generated audio and spectrograms every N epochs')
 
     distributed = parser.add_argument_group('distributed setup')
-    distributed.add_argument('--local_rank', type=int, default=os.getenv('LOCAL_RANK', 0),
-                             help='Rank of the process for multiproc. Do not set manually.')
-    distributed.add_argument('--world_size', type=int, default=os.getenv('WORLD_SIZE', 1),
-                             help='Number of processes for multiproc. Do not set manually.')
+    distributed.add_argument('--master-addr', type=str, default='localhost',
+                             help='IP address of machine hosting master process.')
+    distributed.add_argument('--master-port', type=int, default=13370,
+                             help='Free port on machine hosting master process.')
     return parser
 
 
@@ -152,17 +153,16 @@ def reduce_tensor(tensor, num_gpus):
     return rt.true_divide(num_gpus)
 
 
-def init_distributed(args, world_size, rank):
+def init_distributed(rank, args):
     assert torch.cuda.is_available(), "Distributed mode requires CUDA."
-    print("Initializing distributed training")
-
-    # Set cuda device so everything is done on the right GPU.
-    torch.cuda.set_device(rank % torch.cuda.device_count())
-
-    # Initialize distributed communication
-    dist.init_process_group(backend=('nccl' if args.cuda else 'gloo'),
-                            init_method='env://')
-    print("Done initializing distributed training")
+    print("Rank {}: Initializing distributed training".format(rank))
+    torch.cuda.set_device(rank)
+    os.environ['RANK'] = str(rank)
+    os.environ['WORLD_SIZE'] = str(args.num_gpus)
+    os.environ['MASTER_ADDR'] = args.master_addr
+    os.environ['MASTER_PORT'] = str(args.master_port)
+    dist.init_process_group(init_method='env://', backend='nccl')
+    print("Rank {}: Done initializing distributed training".format(rank))
 
 
 def last_checkpoint(output):
@@ -380,17 +380,8 @@ def apply_ema_decay(model, ema_model, decay):
         v.copy_(decay * v + (1 - decay) * st[k])
 
 
-def main():
-    parser = argparse.ArgumentParser(description='PyTorch FastPitch Training',
-                                     allow_abbrev=False)
-    parser = parse_args(parser)
-    args, _ = parser.parse_known_args()
-
-    distributed_run = args.world_size > 1
-
-    torch.manual_seed(args.seed + args.local_rank)
-    np.random.seed(args.seed + args.local_rank)
-
+def train(rank, args):
+    args.local_rank = rank
     if args.local_rank == 0:
         if not os.path.exists(args.output):
             os.makedirs(args.output)
@@ -404,15 +395,10 @@ def main():
                 tb_subsets=tb_subsets)
     logger.parameters(vars(args), tb_subset='train')
 
-    parser = models.parse_model_args('FastPitch', parser)
-    args, unk_args = parser.parse_known_args()
-    if len(unk_args) > 0:
-        raise ValueError(f'Invalid options {unk_args}')
-
     torch.backends.cudnn.benchmark = args.cudnn_benchmark
 
-    if distributed_run:
-        init_distributed(args, args.world_size, args.local_rank)
+    if args.distributed_run:
+        init_distributed(rank, args)
 
     device = torch.device('cuda' if args.cuda else 'cpu')
     model_config = models.get_model_config('FastPitch', args)
@@ -438,10 +424,10 @@ def main():
     else:
         ema_model = None
 
-    if distributed_run:
+    if args.distributed_run:
         model = DistributedDataParallel(
-            model, device_ids=[args.local_rank], output_device=args.local_rank,
-            find_unused_parameters=True)
+            model, device_ids=[args.local_rank], output_device=args.local_rank)
+            #find_unused_parameters=True)
 
     start_epoch = [1]
     start_iter = [0]
@@ -475,7 +461,7 @@ def main():
     collate_fn = data_functions.get_collate_function('FastPitch',
                                                      symbol_type=args.input_type,
                                                      n_symbols=trainset.n_symbols)
-    if distributed_run:
+    if args.distributed_run:
         train_sampler, shuffle = DistributedSampler(trainset), False
     else:
         train_sampler, shuffle = None, True
@@ -492,7 +478,7 @@ def main():
         vocoder = load_vocoder(args, device)
 
     # log spectrograms and generated audio for first few validation utterances
-    val_sampler = DistributedSampler(valset) if distributed_run else None
+    val_sampler = DistributedSampler(valset) if args.distributed_run else None
     val_loader = DataLoader(valset, num_workers=4, shuffle=False,
                             sampler=val_sampler, batch_size=args.batch_size,
                             pin_memory=False, collate_fn=collate_fn)
@@ -529,7 +515,7 @@ def main():
         epoch_num_frames = 0
         epoch_frames_per_sec = 0.0
 
-        if distributed_run:
+        if args.distributed_run:
             train_loader.sampler.set_epoch(epoch)
 
         accumulated_steps = 0
@@ -569,10 +555,10 @@ def main():
             else:
                 loss.backward()
 
-            if distributed_run:
-                reduced_loss = reduce_tensor(loss.data, args.world_size).item()
+            if args.distributed_run:
+                reduced_loss = reduce_tensor(loss.data, args.num_gpus).item()
                 reduced_num_frames = reduce_tensor(num_frames.data, 1).item()
-                meta = {k: reduce_tensor(v, args.world_size) for k, v in meta.items()}
+                meta = {k: reduce_tensor(v, args.num_gpus) for k, v in meta.items()}
             else:
                 reduced_loss = loss.item()
                 reduced_num_frames = num_frames.item()
@@ -654,13 +640,13 @@ def main():
         )
 
         validate(model, epoch, total_iter, criterion, valset, args.batch_size,
-                 collate_fn, distributed_run, batch_to_gpu, use_gt_durations=True,
+                 collate_fn, args.distributed_run, batch_to_gpu, use_gt_durations=True,
                  vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length,
                  audio_interval=args.audio_interval)
 
         if args.ema_decay > 0:
             validate(ema_model, epoch, total_iter, criterion, valset,
-                     args.batch_size, collate_fn, distributed_run, batch_to_gpu,
+                     args.batch_size, collate_fn, args.distributed_run, batch_to_gpu,
                      use_gt_durations=True, ema=True, vocoder=vocoder,
                      sampling_rate=args.sampling_rate, hop_length=args.hop_length,
                      audio_interval=args.audio_interval)
@@ -684,8 +670,35 @@ def main():
                    ('Time/Iter time', epoch_time)]),
     )
     validate(model, None, total_iter, criterion, valset, args.batch_size,
-             collate_fn, distributed_run, batch_to_gpu, use_gt_durations=True,
+             collate_fn, args.distributed_run, batch_to_gpu, use_gt_durations=True,
              vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='PyTorch FastPitch Training',
+                                     allow_abbrev=False)
+    parser = parse_args(parser)
+    args, _ = parser.parse_known_args()
+
+    parser = models.parse_model_args('FastPitch', parser)
+    args, unk_args = parser.parse_known_args()
+    if len(unk_args) > 0:
+        raise ValueError(f'Invalid options {unk_args}')
+
+    if args.cuda:
+        args.num_gpus = torch.cuda.device_count()
+        args.distributed_run = args.num_gpus > 1
+        args.batch_size = int(args.batch_size / args.num_gpus)
+    else:
+        args.distributed_run = False
+
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+
+    if args.distributed_run:
+        mp.spawn(train, nprocs=args.num_gpus, args=(args,))
+    else:
+        train(0, args)
 
 
 if __name__ == '__main__':
