@@ -50,14 +50,16 @@ class TBLogger:
                                stat=stat)
 
     def log_spectrogram(self, step, key, spectrogram):
-        fig, ax = plt.subplots(figsize=(10, 2))
-        im = ax.imshow(spectrogram,
-                       aspect='auto', origin='lower', interpolation='none')
-        fig.canvas.draw()
-        self.summary_writer.add_figure(key, fig, step)
+        if self.enabled:
+            fig, ax = plt.subplots(figsize=(10, 2))
+            im = ax.imshow(spectrogram,
+                           aspect='auto', origin='lower', interpolation='none')
+            fig.canvas.draw()
+            self.summary_writer.add_figure(key, fig, step)
 
     def log_audio(self, step, key, audio, sampling_rate):
-        self.summary_writer.add_audio(key, audio, step, sampling_rate)
+        if self.enabled:
+            self.summary_writer.add_audio(key, audio, step, sampling_rate)
 
 
 def unique_log_fpath(log_fpath):
