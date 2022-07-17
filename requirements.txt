@@ -6,7 +6,6 @@ numpy
 panphon
 scipy
 tensorboard
-tensorboardX
 tgt
 torch
 torch_optimizer
