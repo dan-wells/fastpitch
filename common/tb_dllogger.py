@@ -132,7 +132,7 @@ def init(log_fpath, log_dir, enabled=True, tb_subsets=[], **tb_kw):
         dllogger.metadata(f"{id_}_Time/Iter time",
                           {"name": "took", "unit": "s", "format": ":>3.2f"})
 
-    timestamp = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%dT%H.%M.%S')
     global tb_loggers
     tb_loggers = {s: TBLogger(enabled, log_dir, name=os.path.join(s, timestamp), **tb_kw)
                   for s in tb_subsets}
