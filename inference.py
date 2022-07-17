@@ -26,20 +26,20 @@
 # *****************************************************************************
 
 import argparse
-import models
 import os
 import time
 import sys
 import warnings
-from tqdm import tqdm
 
 import torch
 import numpy as np
 from scipy.stats import norm
 from scipy.io.wavfile import write
 from torch.nn.utils.rnn import pad_sequence
+from tqdm import tqdm
 
 import dllogger as DLLogger
+import models
 from dllogger import StdOutBackend, JSONStreamBackend, Verbosity
 
 from common import utils
