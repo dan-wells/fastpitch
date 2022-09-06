@@ -29,7 +29,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from common.layers import ConvReLUNorm
+from common.layers import ConvReLUNorm, SeparableConv
 from common.utils import mask_from_lens
 from fastpitch.transformer import FFTransformer
 
@@ -61,12 +61,12 @@ class TemporalPredictor(nn.Module):
     """Predicts a single float per each temporal location"""
 
     def __init__(self, input_size, filter_size, kernel_size, dropout,
-                 n_layers=2):
+                 n_layers=2, sepconv=False):
         super(TemporalPredictor, self).__init__()
 
         self.layers = nn.Sequential(*[
             ConvReLUNorm(input_size if i == 0 else filter_size, filter_size,
-                         kernel_size=kernel_size, dropout=dropout)
+                         kernel_size=kernel_size, dropout=dropout, sepconv=sepconv)
             for i in range(n_layers)]
         )
         self.fc = nn.Linear(filter_size, 1, bias=True)
@@ -81,19 +81,22 @@ class TemporalPredictor(nn.Module):
 class FastPitch(nn.Module):
     def __init__(self, n_mel_channels, symbol_type, n_symbols, padding_idx,
                  symbols_embedding_dim,
+                 use_sepconv,
                  in_fft_n_layers, in_fft_n_heads, in_fft_d_head,
                  in_fft_conv1d_kernel_size, in_fft_conv1d_filter_size,
-                 in_fft_output_size,
+                 in_fft_sepconv, in_fft_output_size,
                  p_in_fft_dropout, p_in_fft_dropatt, p_in_fft_dropemb,
                  out_fft_n_layers, out_fft_n_heads, out_fft_d_head,
                  out_fft_conv1d_kernel_size, out_fft_conv1d_filter_size,
-                 out_fft_output_size,
+                 out_fft_sepconv, out_fft_output_size,
                  p_out_fft_dropout, p_out_fft_dropatt, p_out_fft_dropemb,
                  dur_predictor_kernel_size, dur_predictor_filter_size,
-                 p_dur_predictor_dropout, dur_predictor_n_layers,
+                 dur_predictor_sepconv, p_dur_predictor_dropout,
+                 dur_predictor_n_layers,
                  pitch_predictor_kernel_size, pitch_predictor_filter_size,
-                 p_pitch_predictor_dropout, pitch_predictor_n_layers,
-                 pitch_embedding_kernel_size,
+                 pitch_predictor_sepconv, p_pitch_predictor_dropout,
+                 pitch_predictor_n_layers,
+                 pitch_embedding_kernel_size, pitch_embedding_sepconv,
                  n_speakers, speaker_emb_weight):
         super(FastPitch, self).__init__()
 
@@ -110,7 +113,9 @@ class FastPitch(nn.Module):
             d_embed=symbols_embedding_dim,
             n_embed=n_symbols,
             padding_idx=padding_idx,
-            input_type=symbol_type)
+            input_type=symbol_type,
+            sepconv=in_fft_sepconv or use_sepconv
+        )
 
         if n_speakers > 1:
             self.speaker_emb = nn.Embedding(n_speakers, symbols_embedding_dim)
@@ -122,7 +127,9 @@ class FastPitch(nn.Module):
             in_fft_output_size,
             filter_size=dur_predictor_filter_size,
             kernel_size=dur_predictor_kernel_size,
-            dropout=p_dur_predictor_dropout, n_layers=dur_predictor_n_layers
+            dropout=p_dur_predictor_dropout,
+            n_layers=dur_predictor_n_layers,
+            sepconv=dur_predictor_sepconv or use_sepconv
         )
 
         self.decoder = FFTransformer(
@@ -135,19 +142,26 @@ class FastPitch(nn.Module):
             dropatt=p_out_fft_dropatt,
             dropemb=p_out_fft_dropemb,
             embed_input=False,
-            d_embed=symbols_embedding_dim
+            d_embed=symbols_embedding_dim,
+            sepconv=out_fft_sepconv or use_sepconv
         )
 
         self.pitch_predictor = TemporalPredictor(
             in_fft_output_size,
             filter_size=pitch_predictor_filter_size,
             kernel_size=pitch_predictor_kernel_size,
-            dropout=p_pitch_predictor_dropout, n_layers=pitch_predictor_n_layers
+            dropout=p_pitch_predictor_dropout,
+            n_layers=pitch_predictor_n_layers,
+            sepconv=pitch_predictor_sepconv or use_sepconv
         )
 
-        self.pitch_emb = nn.Conv1d(
+        if pitch_embedding_sepconv or use_sepconv:
+            self.pitch_emb_conv_fn = SeparableConv
+        else:
+            self.pitch_emb_conv_fn = nn.Conv1d
+        self.pitch_emb = self.pitch_emb_conv_fn(
             1, symbols_embedding_dim,
-            kernel_size=pitch_embedding_kernel_size,
+            kernel_size=pitch_embedding_kernel_size, stride=1,
             padding=int((pitch_embedding_kernel_size - 1) / 2))
 
         # Store values precomputed for training data within the model

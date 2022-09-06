@@ -48,6 +48,10 @@ def parse_fastpitch_args(parent, add_help=False):
     symbols.add_argument('--symbols-embedding-dim', default=384, type=int,
                          help='Input embedding dimension')
 
+    arch = parser.add_argument_group('model-wide architecture parameters')
+    arch.add_argument('--use-sepconv', action='store_true',
+                      help='Use depthwise separable convolutions')
+
     in_fft = parser.add_argument_group('input FFT parameters')
     in_fft.add_argument('--in-fft-n-layers', default=6, type=int,
                         help='Number of FFT blocks')
@@ -59,6 +63,8 @@ def parse_fastpitch_args(parent, add_help=False):
                         help='Conv-1D kernel size')
     in_fft.add_argument('--in-fft-conv1d-filter-size', default=1536, type=int,
                         help='Conv-1D filter size')
+    in_fft.add_argument('--in-fft-sepconv', action='store_true',
+                        help='Use depthwise separable convolutions')
     in_fft.add_argument('--in-fft-output-size', default=384, type=int,
                         help='Output dim')
     in_fft.add_argument('--p-in-fft-dropout', default=0.1, type=float,
@@ -79,6 +85,8 @@ def parse_fastpitch_args(parent, add_help=False):
                          help='Conv-1D kernel size')
     out_fft.add_argument('--out-fft-conv1d-filter-size', default=1536, type=int,
                          help='Conv-1D filter size')
+    out_fft.add_argument('--out-fft-sepconv', action='store_true',
+                        help='Use depthwise separable convolutions')
     out_fft.add_argument('--out-fft-output-size', default=384, type=int,
                          help='Output dim')
     out_fft.add_argument('--p-out-fft-dropout', default=0.1, type=float,
@@ -93,6 +101,8 @@ def parse_fastpitch_args(parent, add_help=False):
                           help='Duration predictor conv-1D kernel size')
     dur_pred.add_argument('--dur-predictor-filter-size', default=256, type=int,
                           help='Duration predictor conv-1D filter size')
+    dur_pred.add_argument('--dur-predictor-sepconv', action='store_true',
+                          help='Use depthwise separable convolutions')
     dur_pred.add_argument('--p-dur-predictor-dropout', default=0.1, type=float,
                           help='Dropout probability for duration predictor')
     dur_pred.add_argument('--dur-predictor-n-layers', default=2, type=int,
@@ -103,6 +113,8 @@ def parse_fastpitch_args(parent, add_help=False):
                             help='Pitch predictor conv-1D kernel size')
     pitch_pred.add_argument('--pitch-predictor-filter-size', default=256, type=int,
                             help='Pitch predictor conv-1D filter size')
+    pitch_pred.add_argument('--pitch-predictor-sepconv', action='store_true',
+                            help='Use depthwise separable convolutions')
     pitch_pred.add_argument('--p-pitch-predictor-dropout', default=0.1, type=float,
                             help='Pitch probability for pitch predictor')
     pitch_pred.add_argument('--pitch-predictor-n-layers', default=2, type=int,
@@ -111,6 +123,8 @@ def parse_fastpitch_args(parent, add_help=False):
     cond = parser.add_argument_group('conditioning parameters')
     cond.add_argument('--pitch-embedding-kernel-size', default=3, type=int,
                       help='Pitch embedding conv-1D kernel size')
+    cond.add_argument('--pitch-embedding-sepconv', action='store_true',
+                      help='Use depthwise separable convolutions')
     cond.add_argument('--speaker-emb-weight', type=float, default=1.0,
                       help='Scale speaker embedding')
 

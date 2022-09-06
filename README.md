@@ -204,13 +204,20 @@ python train.py \
 
 Model checkpoints will be saved to `$CHECKPOINT_DIR` every 10 epochs, alongside
 TensorBoard logs. Make sure to pass `--cuda` to run on GPU if available.
-Additional options are available for automatic mixed precision (AMP) and
-distributed training.
 
 For multi-speaker data, specify `--n-speakers N` to learn additional speaker
 embeddings. Input metadata files should then include integer speaker IDs as the
 final field on each line, with IDs ranging between [0, `n-speakers` - 1]. You
 can assign integer speaker IDs using `scripts/add_speaker_id_to_meta.py`.
+
+To reduce model size with (probably) limited impact on performance, pass
+`--use-sepconv` to replace all convolutional layers with depthwise separable
+convolutions.
+Additional options are available for automatic mixed precision (AMP) and
+gradient accumulation.
+We also support data-parallel distributed training at least on a single node --
+just set `CUDA_VISIBLE_DEVICES` and point to a free port on your machine using
+`--master-{addr,port}`.
 
 ## Synthesizing speech
 
@@ -263,6 +270,9 @@ with `train.py` and specify a target speaker ID using `--speaker N` to
 synthesize all utterances in the same target speaker's voice. If `test_meta.tsv`
 includes a `speaker` field then this will take precedence, and individual
 utterances can be synthesized each using a different speaker's voice.
+
+If your model checkpoint uses depthwise separable convolutional layers, then
+also pass `--use-sepconv` to `inference.py`.
 
 ### Vocoder options
 

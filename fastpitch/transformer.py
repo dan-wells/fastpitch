@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from common.layers import SeparableConv
 from common.utils import mask_from_lens
 
 
@@ -37,18 +38,24 @@ class PositionalEmbedding(nn.Module):
 
 
 class PositionwiseConvFF(nn.Module):
-    def __init__(self, d_model, d_inner, kernel_size, dropout, pre_lnorm=False):
+    def __init__(self, d_model, d_inner, kernel_size, dropout, sepconv=False,
+                 pre_lnorm=False):
         super(PositionwiseConvFF, self).__init__()
 
         self.d_model = d_model
         self.d_inner = d_inner
         self.dropout = dropout
 
+        if sepconv:
+            self.conv_fn = SeparableConv
+        else:
+            self.conv_fn = nn.Conv1d
+
         self.CoreNet = nn.Sequential(
-            nn.Conv1d(d_model, d_inner, kernel_size, 1, (kernel_size // 2)),
+            self.conv_fn(d_model, d_inner, kernel_size, 1, (kernel_size // 2)),
             nn.ReLU(),
             # nn.Dropout(dropout),  # worse convergence
-            nn.Conv1d(d_inner, d_model, kernel_size, 1, (kernel_size // 2)),
+            self.conv_fn(d_inner, d_model, kernel_size, 1, (kernel_size // 2)),
             nn.Dropout(dropout),
         )
         self.layer_norm = nn.LayerNorm(d_model)
@@ -150,12 +157,13 @@ class MultiHeadAttn(nn.Module):
 
 class TransformerLayer(nn.Module):
     def __init__(self, n_head, d_model, d_head, d_inner, kernel_size, dropout,
-                 **kwargs):
+                 dropatt=0.1, sepconv=False, pre_lnorm=False):
         super(TransformerLayer, self).__init__()
 
-        self.dec_attn = MultiHeadAttn(n_head, d_model, d_head, dropout, **kwargs)
+        self.dec_attn = MultiHeadAttn(n_head, d_model, d_head, dropout,
+                                      dropatt, pre_lnorm)
         self.pos_ff = PositionwiseConvFF(d_model, d_inner, kernel_size, dropout,
-                                         pre_lnorm=kwargs.get('pre_lnorm'))
+                                         sepconv, pre_lnorm)
 
     def forward(self, dec_inp, mask=None):
         output = self.dec_attn(dec_inp, attn_mask=~mask.squeeze(2))
@@ -169,7 +177,7 @@ class FFTransformer(nn.Module):
     def __init__(self, n_layer, n_head, d_model, d_head, d_inner, kernel_size,
                  dropout, dropatt, dropemb=0.0, embed_input=True,
                  n_embed=None, d_embed=None, padding_idx=0, input_type=None,
-                 pre_lnorm=False):
+                 sepconv=False, pre_lnorm=False):
         super(FFTransformer, self).__init__()
         self.d_model = d_model
         self.n_head = n_head
@@ -195,7 +203,7 @@ class FFTransformer(nn.Module):
             self.layers.append(
                 TransformerLayer(
                     n_head, d_model, d_head, d_inner, kernel_size, dropout,
-                    dropatt=dropatt, pre_lnorm=pre_lnorm)
+                    dropatt=dropatt, sepconv=sepconv, pre_lnorm=pre_lnorm)
             )
 
     def forward(self, dec_inp, seq_lens=None, conditioning=0):

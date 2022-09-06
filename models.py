@@ -183,12 +183,15 @@ def get_model_config(model_name, args):
             n_symbols=len(get_symbols(args.symbol_set, args.input_type)),
             padding_idx=get_pad_idx(args.symbol_set, args.input_type),
             symbols_embedding_dim=args.symbols_embedding_dim,
+            # model-wide architecture
+            use_sepconv=args.use_sepconv,
             # input FFT
             in_fft_n_layers=args.in_fft_n_layers,
             in_fft_n_heads=args.in_fft_n_heads,
             in_fft_d_head=args.in_fft_d_head,
             in_fft_conv1d_kernel_size=args.in_fft_conv1d_kernel_size,
             in_fft_conv1d_filter_size=args.in_fft_conv1d_filter_size,
+            in_fft_sepconv=args.in_fft_sepconv,
             in_fft_output_size=args.in_fft_output_size,
             p_in_fft_dropout=args.p_in_fft_dropout,
             p_in_fft_dropatt=args.p_in_fft_dropatt,
@@ -199,6 +202,7 @@ def get_model_config(model_name, args):
             out_fft_d_head=args.out_fft_d_head,
             out_fft_conv1d_kernel_size=args.out_fft_conv1d_kernel_size,
             out_fft_conv1d_filter_size=args.out_fft_conv1d_filter_size,
+            out_fft_sepconv=args.out_fft_sepconv,
             out_fft_output_size=args.out_fft_output_size,
             p_out_fft_dropout=args.p_out_fft_dropout,
             p_out_fft_dropatt=args.p_out_fft_dropatt,
@@ -206,15 +210,18 @@ def get_model_config(model_name, args):
             # duration predictor
             dur_predictor_kernel_size=args.dur_predictor_kernel_size,
             dur_predictor_filter_size=args.dur_predictor_filter_size,
+            dur_predictor_sepconv=args.dur_predictor_sepconv,
             p_dur_predictor_dropout=args.p_dur_predictor_dropout,
             dur_predictor_n_layers=args.dur_predictor_n_layers,
             # pitch predictor
             pitch_predictor_kernel_size=args.pitch_predictor_kernel_size,
             pitch_predictor_filter_size=args.pitch_predictor_filter_size,
+            pitch_predictor_sepconv=args.pitch_predictor_sepconv,
             p_pitch_predictor_dropout=args.p_pitch_predictor_dropout,
             pitch_predictor_n_layers=args.pitch_predictor_n_layers,
             # pitch conditioning
             pitch_embedding_kernel_size=args.pitch_embedding_kernel_size,
+            pitch_embedding_sepconv=args.pitch_embedding_sepconv,
             # speakers parameters
             n_speakers=args.n_speakers,
             speaker_emb_weight=args.speaker_emb_weight
