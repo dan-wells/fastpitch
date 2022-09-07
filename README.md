@@ -138,25 +138,25 @@ Mel spectrogram feature extraction is defined by several parameters passed to
 `prepare_dataset.py`:
 
 - `--sampling-rate`, the sampling rate of your audio data (default 22050 Hz)
-- `--filter-length`, the number of FFT frequency bins used (default 1024)
-- `--hop-length`, frame shift of the FFT analysis window (default 256 samples)
-- `--win-length`, length of signal attenuation window (default 1024)
+- `--filter-length`, the number of STFT frequency bins used (default 512)
+- `--hop-length`, frame shift of the STFT analysis window (default 256 samples)
+- `--win-length`, length of signal attenuation window (default 512)
 - `--n-mel-channels`, number of bins in mel-scale filter bank (default 80)
 - `--mel-f{min,max}`, minimum and maximum frequency of mel filter bank bins
   (defaults 0, 8000)
 
 These parameters define the frequency and time resolution of acoustic feature
-extraction. Each frequency bin in the FFT analysis window spans `sampling-rate /
+extraction. Each frequency bin in the STFT analysis window spans `sampling-rate /
 filter-length` Hz, and each analysis window covers `filter-length /
 sampling-rate` seconds of audio. For the default values specified above, this
-gives 22050 / 1024 = 21.5 Hz frequency resolution and 1024 / 22050 = 46 ms
+gives 22050 / 512 = 43 Hz frequency resolution and 512 / 22050 = 23 ms
 analysis windows. The frame shift moves the analysis window `hop-length /
 sampling-rate` seconds forward each frame, for a stride of 256 / 22050 = 11 ms
-(~75% overlap between adjacent frames). For efficiency, `filter-length` should
+(~50% overlap between adjacent frames). For efficiency, `filter-length` should
 be some power of 2, and in general `win-length` should match `filter-length`.
 
 See [this document](http://www.add.ece.ufl.edu/4511/references/ImprovingFFTResoltuion.pdf)
-for additional discussion of FFT parameters.
+for additional discussion of STFT parameters.
 
 If you want to use HuBERT unit sequences as input, then you will need to match
 the 50 Hz framerate of that feature extraction process by adjusting the

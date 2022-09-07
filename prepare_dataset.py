@@ -72,11 +72,11 @@ def parse_args(parser):
                         help='Apply peak normalization to audio')
     parser.add_argument('--sampling-rate', default=22050, type=int,
                         help='Sampling rate')
-    parser.add_argument('--filter-length', default=1024, type=int,
+    parser.add_argument('--filter-length', default=512, type=int,
                         help='Filter length')
     parser.add_argument('--hop-length', default=256, type=int,
                         help='Hop (stride) length')
-    parser.add_argument('--win-length', default=1024, type=int,
+    parser.add_argument('--win-length', default=512, type=int,
                         help='Window length')
     parser.add_argument('--n-mel-channels', default=80, type=int,
                         help='Number of bins in mel-spectrograms')
