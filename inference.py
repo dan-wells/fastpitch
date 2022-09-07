@@ -139,7 +139,6 @@ def parse_args(parser):
 
 
 def load_model_from_ckpt(checkpoint_path, ema, model):
-
     checkpoint_data = torch.load(checkpoint_path)
     status = ''
 
@@ -153,14 +152,14 @@ def load_model_from_ckpt(checkpoint_path, ema, model):
 
         if any(key.startswith('module.') for key in sd):
             sd = {k.replace('module.', ''): v for k,v in sd.items()}
-        status += ' ' + str(model.load_state_dict(sd, strict=False))
+        status += ' ' + str(model.load_state_dict(sd))
     elif 'generator' in checkpoint_data:
         # HiFi-GAN checkpoint
         model.load_state_dict(checkpoint_data['generator'])
     else:
         model = checkpoint_data['model']
-    print(f'Loaded {checkpoint_path}{status}')
 
+    print(f'Loaded {checkpoint_path}{status}')
     return model
 
 
