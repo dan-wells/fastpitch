@@ -30,7 +30,6 @@ from typing import Optional
 
 import librosa
 import numpy as np
-
 import torch
 from scipy.io.wavfile import read
 
@@ -66,11 +65,6 @@ def load_filepaths_and_text(dataset_path, fnames, has_speakers=False, split="|")
         with open(fname, encoding='utf-8') as f:
             fpaths_and_text += [split_line(dataset_path, line) for line in f]
     return fpaths_and_text
-
-
-def stats_filename(dataset_path, filelist_path, feature_name):
-    stem = os.path.splitext(os.path.basename(filelist_path))[0]
-    return os.path.join(dataset_path, f'{feature_name}_stats__{stem}.json')
 
 
 def to_gpu(x):

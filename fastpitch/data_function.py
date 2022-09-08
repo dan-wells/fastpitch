@@ -26,31 +26,69 @@
 # *****************************************************************************
 
 import numpy as np
-
 import torch
 
-from common.utils import to_gpu
-from tacotron2.data_function import TextMelLoader
+import common.layers as layers
+from common.utils import load_filepaths_and_text, load_wav_to_torch, to_gpu
 from common.text.text_processing import TextProcessing, PhoneProcessing, UnitProcessing
 
 
-class TextMelAliLoader(TextMelLoader):
+class TextMelAliLoader(torch.utils.data.Dataset):
     """
+        1) loads audio,text pairs
+        2) normalizes text and converts them to sequences of one-hot vectors
+        3) computes mel-spectrograms from audio files.
     """
-    def __init__(self, **kwargs):
-        super(TextMelAliLoader, self).__init__(**kwargs)
-        if kwargs['input_type'] == 'char':
-            self.tp = TextProcessing(kwargs['symbol_set'], kwargs['text_cleaners'])
-        elif kwargs['input_type'] == 'unit':
-            self.tp = UnitProcessing(kwargs['symbol_set'], kwargs['input_type'])
+    def __init__(self, dataset_path, audiopaths_and_text, text_cleaners, n_mel_channels,
+                 input_type='char', symbol_set='english_basic', n_speakers=1,
+                 load_mel_from_disk=True, max_wav_value=None, sampling_rate=None,
+                 filter_length=None, hop_length=None, win_length=None,
+                 mel_fmin=None, mel_fmax=None, peak_norm=False, **kwargs):
+        self.audiopaths_and_text = load_filepaths_and_text(
+            dataset_path, audiopaths_and_text,
+            has_speakers=(n_speakers > 1))
+        self.n_speakers = n_speakers
+
+        self.input_type = input_type
+        self.symbol_set = symbol_set
+        self.text_cleaners = text_cleaners
+        if self.input_type == 'char':
+            self.tp = TextProcessing(self.symbol_set, self.text_cleaners)
+        elif self.input_type == 'unit':
+            self.tp = UnitProcessing(self.symbol_set, self.input_type)
         else:
-            self.tp = PhoneProcessing(kwargs['symbol_set'], kwargs['input_type'])
+            self.tp = PhoneProcessing(self.symbol_set, self.input_type)
         self.n_symbols = len(self.tp.symbols)
-        self.n_speakers = kwargs['n_speakers']
-        if len(self.audiopaths_and_text[0]) != 4 + (kwargs['n_speakers'] > 1):
-            raise ValueError('Expected four columns in audiopaths file for single speaker model. \n'
-                             'For multispeaker model, the filelist format is '
-                             '<mel>|<dur>|<pitch>|<text>|<speaker_id>')
+
+        self.load_mel_from_disk = load_mel_from_disk
+        if not load_mel_from_disk:
+            self.max_wav_value = max_wav_value
+            self.peak_norm = peak_norm
+            self.sampling_rate = sampling_rate
+            self.stft = layers.TacotronSTFT(
+                filter_length, hop_length, win_length,
+                n_mel_channels, sampling_rate, mel_fmin, mel_fmax)
+
+    def get_mel(self, filename):
+        if not self.load_mel_from_disk:
+            audio, sampling_rate = load_wav_to_torch(filename)
+            if sampling_rate != self.stft.sampling_rate:
+                raise ValueError("{} {} SR doesn't match target {} SR".format(
+                    sampling_rate, self.stft.sampling_rate))
+            if self.peak_norm:
+                audio = (audio / torch.max(torch.abs(audio))) * (self.max_wav_value - 1)
+            audio_norm = audio / self.max_wav_value
+            audio_norm = audio_norm.unsqueeze(0)
+            audio_norm = torch.autograd.Variable(audio_norm, requires_grad=False)
+            melspec = self.stft.mel_spectrogram(audio_norm)
+            melspec = torch.squeeze(melspec, 0)
+        else:
+            melspec = torch.load(filename)
+        return melspec
+
+    def get_text(self, text):
+        text_encoded = torch.IntTensor(self.tp.encode_text(text))
+        return text_encoded
 
     def __getitem__(self, index):
         # separate filename and text
@@ -63,18 +101,21 @@ class TextMelAliLoader(TextMelLoader):
         len_text = len(text)
         text = self.get_text(text)
         mel = self.get_mel(audiopath)
+        # expect always to load duration and pitch targets from disk
         dur = torch.load(durpath)
         pitch = torch.load(pitchpath)
         return (text, mel, len_text, dur, pitch, speaker)
+
+    def __len__(self):
+        return len(self.audiopaths_and_text)
 
 
 class TextMelAliCollate():
     """ Zero-pads model inputs and targets based on number of frames per setep
     """
-    def __init__(self, symbol_type='char', n_symbols=148, n_frames_per_step=1):
+    def __init__(self, symbol_type='char', n_symbols=148):
         self.symbol_type = symbol_type
         self.n_symbols = n_symbols
-        self.n_frames_per_step = 1  # Taco2 bckwd compat
 
     def __call__(self, batch):
         """Collate's training batch from normalized text and mel-spectrogram
@@ -108,12 +149,7 @@ class TextMelAliCollate():
         # Right zero-pad mel-spec
         num_mels = batch[0][1].size(0)
         max_target_len = max([x[1].size(1) for x in batch])
-        if max_target_len % self.n_frames_per_step != 0:
-            max_target_len += (self.n_frames_per_step - max_target_len
-                               % self.n_frames_per_step)
-            assert max_target_len % self.n_frames_per_step == 0
 
-        # include mel padded and gate padded
         mel_padded = torch.FloatTensor(len(batch), num_mels, max_target_len)
         mel_padded.zero_()
         output_lengths = torch.LongTensor(len(batch))
