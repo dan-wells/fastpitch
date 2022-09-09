@@ -89,6 +89,10 @@ def parse_args(parser):
     parser.add_argument('--pitch-method', default='yin', choices=['yin', 'pyin'],
                         help='Method to use for pitch extraction. Probabilistic YIN '
                         '(pyin) is more accurate but also much slower.')
+    parser.add_argument('--pitch-mean', default=None,
+                        help='Mean value to normalize extracted pitch')
+    parser.add_argument('--pitch-std', default=None,
+                        help='Standard deviation to normalize extracted pitch')
     parser.add_argument('--durations-from', type=str, default='',
                         choices=['textgrid', 'unit_rle'],
                         help='Extract symbol durations from Praat TextGrids or '
@@ -234,16 +238,19 @@ def calculate_pitch(wav, durs, fmin=40, fmax=600, sr=None, hop_length=256,
     return pitch_char
 
 
-def normalize_pitch_vectors(fname_pitch):
+def normalize_pitch_vectors(fname_pitch, mean=None, std=None):
     nonzeros = np.concatenate([v[np.where(v != 0.0)[0]]
                                for v in fname_pitch.values()])
-    mean, std = np.mean(nonzeros), np.std(nonzeros)
+    if mean is None:
+        mean = np.mean(nonzeros)
+    if std is None:
+        std = np.std(nonzeros)
     for v in fname_pitch.values():
         zero_idxs = np.where(v == 0.0)[0]
         v -= mean
         v /= std
         v[zero_idxs] = 0.0
-    return mean, std
+    return fname_pitch, mean, std
 
 
 def save_stats(dataset_path, wav_text_filelist, feature_name, mean, std):
@@ -367,7 +374,7 @@ def main():
             torch.save(mel, os.path.join(args.dataset_path, 'mels', fname + '.pt'))
             torch.save(durations, os.path.join(args.dataset_path, 'durations', fname + '.pt'))
 
-    mean, std = normalize_pitch_vectors(fname_pitch)
+    fname_pitch, mean, std = normalize_pitch_vectors(fname_pitch, args.pitch_mean, args.pitch_std)
     # TODO: consider normalizing per speaker
     for fname, pitch in fname_pitch.items():
         fpath = os.path.join(args.dataset_path, 'pitches', fname + '.pt')
