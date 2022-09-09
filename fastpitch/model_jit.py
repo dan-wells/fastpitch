@@ -57,7 +57,7 @@ def regulate_len(durations, enc_out, pace=1.0, mel_max_len=0):
     return enc_rep, dec_lens
 
 
-class FastPitch(nn.Module):
+class FastPitchJIT(nn.Module):
     def __init__(self, n_mel_channels, symbol_type, n_symbols, padding_idx,
                  symbols_embedding_dim,
                  in_fft_n_layers, in_fft_n_heads, in_fft_d_head,
