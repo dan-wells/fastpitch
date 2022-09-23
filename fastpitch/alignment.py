@@ -13,10 +13,9 @@
 # limitations under the License.
 
 import numpy as np
-from numba import jit, prange
+from numba import prange
 
 
-@jit(nopython=True)
 def mas(log_attn_map, width=1):
     # assumes mel x text
     opt = np.zeros_like(log_attn_map)
@@ -43,7 +42,6 @@ def mas(log_attn_map, width=1):
     return opt
 
 
-@jit(nopython=True)
 def mas_width1(log_attn_map):
     """mas with hardcoded width=1"""
     # assumes mel x text
@@ -72,7 +70,6 @@ def mas_width1(log_attn_map):
     return opt
 
 
-@jit(nopython=True, parallel=True)
 def b_mas(b_log_attn_map, in_lens, out_lens, width=1):
     assert width == 1
     attn_out = np.zeros_like(b_log_attn_map)

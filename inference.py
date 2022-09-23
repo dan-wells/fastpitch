@@ -83,8 +83,6 @@ def parse_args(parser):
                         help='Warmup iterations before measuring performance')
     parser.add_argument('--repeats', type=int, default=1,
                         help='Repeat inference for benchmarking')
-    parser.add_argument('--torchscript', action='store_true',
-                        help='Apply TorchScript')
     parser.add_argument('--ema', action='store_true',
                         help='Use EMA averaged model (if saved in checkpoints)')
     parser.add_argument('--dataset-path', type=str, default='',
@@ -154,8 +152,8 @@ def load_model_from_ckpt(checkpoint_path, ema, model):
 
 
 def load_and_setup_model(model_name, parser, checkpoint, amp, device,
-                         unk_args=[], forward_is_infer=False, ema=True,
-                         jitable=False):
+                         unk_args=[], forward_is_infer=False, ema=True):
+                         
     model_parser = models.parse_model_args(model_name, parser, add_help=False)
     model_args, model_unk_args = model_parser.parse_known_args()
     unk_args[:] = list(set(unk_args) & set(model_unk_args))
@@ -163,8 +161,7 @@ def load_and_setup_model(model_name, parser, checkpoint, amp, device,
     model_config = models.get_model_config(model_name, model_args)
 
     model = models.get_model(model_name, model_config, device,
-                             forward_is_infer=forward_is_infer,
-                             jitable=jitable)
+                             forward_is_infer=forward_is_infer)
 
     if checkpoint is not None:
         model = load_model_from_ckpt(checkpoint, ema, model)
@@ -327,11 +324,7 @@ def main():
     if args.fastpitch:
         generator = load_and_setup_model(
             'FastPitch', parser, args.fastpitch, args.amp, device,
-            unk_args=unk_args, forward_is_infer=True, ema=args.ema,
-            jitable=args.torchscript)
-
-        if args.torchscript:
-            generator = torch.jit.script(generator)
+            unk_args=unk_args, forward_is_infer=True, ema=args.ema)
     else:
         generator = None
 
@@ -370,10 +363,6 @@ def main():
     gen_kw = {'pace': args.pace,
               'speaker': args.speaker,
               'pitch_transform': build_pitch_transformation(args)}
-
-    if args.torchscript:
-        gen_kw.pop('pitch_transform')
-        print('NOTE: Pitch transforms are disabled with TorchScript')
 
     all_utterances = 0
     all_samples = 0

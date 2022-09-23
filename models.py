@@ -34,7 +34,6 @@ import torch
 
 from common.text.symbols import get_symbols, get_pad_idx
 from fastpitch.model import FastPitch
-from fastpitch.model_jit import FastPitchJIT
 from hifigan import AttrDict
 from hifigan.model import Generator as HiFiGanGenerator
 
@@ -50,14 +49,10 @@ def parse_model_args(model_name, parser, add_help=False):
         raise NotImplementedError(model_name)
 
 
-def get_model(model_name, model_config, device,
-              forward_is_infer=False, forward_mas=False, jitable=False):
+def get_model(model_name, model_config, device, forward_is_infer=False, forward_mas=False):
     """Chooses a model based on name"""
     if model_name == 'FastPitch':
-        if jitable:
-            model = FastPitchJIT(**model_config)
-        else:
-            model = FastPitch(**model_config)
+        model = FastPitch(**model_config)
     elif model_name == 'HiFi-GAN':
         model = HiFiGanGenerator(model_config)
     else:

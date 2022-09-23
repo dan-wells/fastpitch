@@ -1,6 +1,8 @@
 runs*/
 LJSpeech-1.1/
 output*
+data/
+exp/
 scripts_joc/
 tests/
 pretrained_models/
