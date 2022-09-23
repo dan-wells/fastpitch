@@ -113,9 +113,10 @@ class TextMelAliLoader(torch.utils.data.Dataset):
 class TextMelAliCollate():
     """ Zero-pads model inputs and targets based on number of frames per setep
     """
-    def __init__(self, symbol_type='char', n_symbols=148):
+    def __init__(self, symbol_type='char', n_symbols=148, mas=False):
         self.symbol_type = symbol_type
         self.n_symbols = n_symbols
+        self.mas = mas
 
     def __call__(self, batch):
         """Collate's training batch from normalized text and mel-spectrogram
@@ -138,14 +139,6 @@ class TextMelAliCollate():
             text = batch[ids_sorted_decreasing[i]][0]
             text_padded[i, :text.size(0)] = text
 
-        dur_padded = torch.zeros(len(batch), max_input_len, dtype=batch[0][3].dtype)
-        dur_lens = torch.zeros(dur_padded.size(0), dtype=torch.int32)
-        for i in range(len(ids_sorted_decreasing)):
-            dur = batch[ids_sorted_decreasing[i]][3]
-            dur_padded[i, :dur.shape[0]] = dur
-            dur_lens[i] = dur.shape[0]
-            assert dur_lens[i] == input_lengths[i]
-
         # Right zero-pad mel-spec
         num_mels = batch[0][1].size(0)
         max_target_len = max([x[1].size(1) for x in batch])
@@ -158,8 +151,30 @@ class TextMelAliCollate():
             mel_padded[i, :, :mel.size(1)] = mel
             output_lengths[i] = mel.size(1)
 
-        pitch_padded = torch.zeros(dur_padded.size(0), dur_padded.size(1),
-                                   dtype=batch[0][4].dtype)
+        if self.mas:
+            dur_padded = torch.zeros(
+                len(batch), max_target_len, max_input_len)
+            dur_padded.zero_()
+            dur_lens = None
+            for i in range(len(ids_sorted_decreasing)):
+                dur = batch[ids_sorted_decreasing[i]][3]
+                dur_padded[i, :dur.size(0), :dur.size(1)] = dur
+        else:
+            dur_padded = torch.zeros(
+                len(batch), max_input_len, dtype=batch[0][3].dtype)
+            dur_lens = torch.zeros(dur_padded.size(0), dtype=torch.int32)
+            for i in range(len(ids_sorted_decreasing)):
+                dur = batch[ids_sorted_decreasing[i]][3]
+                dur_padded[i, :dur.shape[0]] = dur
+                dur_lens[i] = dur.shape[0]
+                assert dur_lens[i] == input_lengths[i]
+
+        if self.mas:
+            pitch_padded = torch.zeros(
+                mel_padded.size(0), mel_padded.size(2), dtype=batch[0][4].dtype)
+        else:
+            pitch_padded = torch.zeros(
+                dur_padded.size(0), dur_padded.size(1), dtype=batch[0][4].dtype)
         for i in range(len(ids_sorted_decreasing)):
             pitch = batch[ids_sorted_decreasing[i]][4]
             pitch_padded[i, :pitch.shape[0]] = pitch
@@ -179,7 +194,7 @@ class TextMelAliCollate():
                 len_x, dur_padded, dur_lens, pitch_padded, speaker)
 
 
-def batch_to_gpu(batch, symbol_type='char'):
+def batch_to_gpu(batch, symbol_type='char', mas=False):
     text_padded, input_lengths, mel_padded, output_lengths, \
         len_x, dur_padded, dur_lens, pitch_padded, speaker = batch
     if symbol_type == 'pf':
@@ -190,13 +205,17 @@ def batch_to_gpu(batch, symbol_type='char'):
     mel_padded = to_gpu(mel_padded).float()
     output_lengths = to_gpu(output_lengths).long()
     dur_padded = to_gpu(dur_padded).long()
-    dur_lens = to_gpu(dur_lens).long()
     pitch_padded = to_gpu(pitch_padded).float()
     if speaker is not None:
         speaker = to_gpu(speaker).long()
+
     # Alignments act as both inputs and targets - pass shallow copies
     x = [text_padded, input_lengths, mel_padded, output_lengths,
          dur_padded, dur_lens, pitch_padded, speaker]
-    y = [mel_padded, dur_padded, dur_lens, pitch_padded]
+    if mas:
+        y = [mel_padded, input_lengths, output_lengths]
+    else:
+        dur_lens = to_gpu(dur_lens).long()
+        y = [mel_padded, dur_padded, dur_lens, pitch_padded]
     len_x = torch.sum(output_lengths)
     return (x, y, len_x)

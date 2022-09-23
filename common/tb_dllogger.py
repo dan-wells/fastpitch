@@ -61,6 +61,14 @@ class TBLogger:
         if self.enabled:
             self.summary_writer.add_audio(key, audio, step, sampling_rate)
 
+    def log_attn_maps(self, step, key, attn_soft, attn_hard):
+        if self.enabled:
+            fig, axs = plt.subplots(2, 1)
+            axs[0].imshow(attn_soft, aspect='auto', origin='lower')
+            axs[1].imshow(attn_hard, aspect='auto', origin='lower')
+            fig.canvas.draw()
+            self.summary_writer.add_figure(key, fig, step)
+
 
 def unique_log_fpath(log_fpath):
     if not os.path.isfile(log_fpath):
@@ -116,11 +124,20 @@ def init(log_fpath, log_dir, enabled=True, tb_subsets=[], **tb_kw):
         dllogger.metadata(f"{id_}_Loss/Total",
                           {"name": f"{pref}loss", "format": ":>5.2f"})
         dllogger.metadata(f"{id_}_Loss/Mel",
-                          {"name": f"{pref}mel loss", "format": ":>5.2f"})
+                          {"name": f"{pref}mel", "format": ":>5.2f"})
         dllogger.metadata(f"{id_}_Loss/Duration",
-                          {"name": f"{pref}dur loss", "format": ":>5.2f"})
+                          {"name": f"{pref}dur", "format": ":>5.2f"})
         dllogger.metadata(f"{id_}_Loss/Pitch",
-                          {"name": f"{pref}pitch loss", "format": ":>5.2f"})
+                          {"name": f"{pref}pitch", "format": ":>5.2f"})
+
+        dllogger.metadata(f"{id_}_Loss/Alignment",
+                          {"name": f"{pref}align", "format": ":>5.2f"})
+        dllogger.metadata(f"{id_}_Align/Attention loss",
+                          {"name": f"{pref}attn loss", "format": ":>5.2f"})
+        dllogger.metadata(f"{id_}_Align/KL loss",
+                          {"name": f"{pref}kl loss", "format": ":>5.2f"})
+        dllogger.metadata(f"{id_}_Align/KL weight",
+                          {"name": f"{pref}kl weight", "format": ":>5.5f"})
 
         dllogger.metadata(f"{id_}_Error/Duration",
                           {"name": f"{pref}dur error", "format": ":>5.2f"})
@@ -174,6 +191,10 @@ def log_spectrogram_tb(tb_total_steps, key, spectrogram, tb_subset='train'):
 
 def log_audio_tb(tb_total_steps, key, audio, sampling_rate, tb_subset='train'):
     tb_loggers[tb_subset].log_audio(tb_total_steps, key, audio, sampling_rate)
+
+
+def log_attn_maps_tb(tb_total_steps, key, attn_soft, attn_hard, tb_subset='train'):
+    tb_loggers[tb_subset].log_attn_maps(tb_total_steps, key, attn_soft, attn_hard)
 
 
 def parameters(data, verbosity=0, tb_subset=None):

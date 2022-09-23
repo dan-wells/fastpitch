@@ -51,6 +51,9 @@ import common.tb_dllogger as logger
 import data_functions
 import loss_functions
 import models
+from fastpitch.attn_loss_function import AttentionBinarizationLoss
+from fastpitch.data_function import batch_to_gpu, TextMelAliCollate, TextMelAliLoader
+from fastpitch.loss_function import FastPitchLoss, FastPitchMASLoss
 
 
 def parse_args(parser):
@@ -103,6 +106,14 @@ def parse_args(parser):
                               default=0.1, help='Rescale duration predictor loss')
     optimization.add_argument('--pitch-predictor-loss-scale', type=float,
                               default=0.1, help='Rescale pitch predictor loss')
+    optimization.add_argument('--attn-loss-scale', type=float,
+                              default=1.0, help='Rescale alignment loss')
+    optimization.add_argument('--kl-loss-weight', type=float,
+                              default=1.0, help='Rescale hard attention loss')
+    optimization.add_argument('--kl-loss-start-epoch', type=int, default=0,
+                              help='Start adding the hard attention loss term')
+    optimization.add_argument('--kl-loss-warmup-epochs', type=int, default=100,
+                              help='Gradually increase the hard attention loss term')
 
     dataset = parser.add_argument_group('dataset parameters')
     dataset.add_argument('--training-files', type=str, nargs='*', required=True,
@@ -247,6 +258,7 @@ def load_vocoder(args, device):
 
 def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn,
              distributed_run, batch_to_gpu, use_gt_durations=False, ema=False,
+             mas=False, attention_kl_loss=None, kl_weight=None,
              vocoder=None, sampling_rate=22050, hop_length=256, audio_interval=5):
     """Handles all the validation scoring and printing"""
     was_training = model.training
@@ -262,9 +274,17 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
         val_meta = defaultdict(float)
         val_num_frames = 0
         for i, batch in enumerate(val_loader):
-            x, y, num_frames = batch_to_gpu(batch, collate_fn.symbol_type)
+            x, y, num_frames = batch_to_gpu(batch, collate_fn.symbol_type, mas=mas)
             y_pred = model(x, use_gt_durations=use_gt_durations)
             loss, meta = criterion(y_pred, y, is_training=False, meta_agg='sum')
+
+            if mas:
+                _, _, _, _, _, _, attn_soft, attn_hard, _, _ = y_pred
+                binarization_loss = attention_kl_loss(attn_hard, attn_soft)
+                meta['kl_loss'] = binarization_loss.clone().detach() * kl_weight
+                meta['kl_weight'] = kl_weight
+                loss += kl_weight * binarization_loss
+                meta['align_loss'] = meta['attn_loss'] + meta['kl_loss']
 
             if distributed_run:
                 for k, v in meta.items():
@@ -283,27 +303,39 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
                                                    key=lambda x: len(valset.get_text(x[3])),
                                                    reverse=True)
                 tb_fnames = [i[0] for i in batch_audiopaths_and_text]
-                plot_spectrograms(y_pred, tb_fnames, total_iter, n=4, label='Predicted spectrogram')
+                plot_spectrograms(
+                    y_pred, tb_fnames, total_iter, n=4, label='Predicted spectrogram', mas=mas)
                 if vocoder is not None:
                     generate_audio(y_pred, tb_fnames, total_iter, vocoder, sampling_rate,
-                                   hop_length, n=4, label='Predicted audio')
+                                   hop_length, n=4, label='Predicted audio', mas=mas)
+                if mas:
+                    plot_attn_maps(y_pred, tb_fnames, total_iter, n=4, label='Predicted attention')
 
         val_meta = {k: v / len(valset) for k, v in val_meta.items()}
 
     val_meta['took'] = time.perf_counter() - tik
 
+    logger_data = [
+        ('Loss/Total', val_meta['loss'].item()),
+        ('Loss/Mel', val_meta['mel_loss'].item()),
+        ('Loss/Duration', val_meta['duration_predictor_loss'].item()),
+        ('Loss/Pitch', val_meta['pitch_loss'].item()),
+        #('Error/Duration', val_meta['duration_error'].item()),
+        #('Error/Pitch', val_meta['pitch_error'].item()),
+        #('Time/FPS', num_frames.item() / val_meta['took']),
+    ]
+    if mas:
+        logger_data.extend([
+            ('Loss/Alignment', val_meta['align_loss'].item()),
+            #('Align/Attention loss', iter_attn_loss),
+            #('Align/KL loss', iter_kl_loss),
+            #('Align/KL weight', iter_kl_weight),
+        ])
+    logger_data.append(('Time/Iter time', val_meta['took']))
     logger.log((epoch,) if epoch is not None else (),
                tb_total_steps=total_iter,
                subset='val_ema' if ema else 'val',
-               data=OrderedDict([
-                   ('Loss/Total', val_meta['loss'].item()),
-                   ('Loss/Mel', val_meta['mel_loss'].item()),
-                   ('Loss/Duration', val_meta['duration_predictor_loss'].item()),
-                   ('Loss/Pitch', val_meta['pitch_loss'].item()),
-                   #('Error/Duration', val_meta['duration_error'].item()),
-                   #('Error/Pitch', val_meta['pitch_error'].item()),
-                   #('Time/FPS', num_frames.item() / val_meta['took']),
-                   ('Time/Iter time', val_meta['took'])]),
+               data=OrderedDict(logger_data)
     )
 
     if was_training:
@@ -311,52 +343,85 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
     return val_meta
 
 
-def plot_spectrograms(y, fnames, step, n=4, label='Predicted spectrogram'):
+def plot_spectrograms(y, fnames, step, n=4, label='Predicted spectrogram', mas=False):
     """Plot spectrograms for n utterances in batch"""
-    n = min(n, len(y[0]))
-    fnames = fnames[:n]
+    bs = len(fnames)
+    n = min(n, bs)
+    s = bs // n
+    fnames = fnames[::s]
     if label == 'Predicted spectrogram':
         # y: mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred
-        mel_specs = y[0][:n].transpose(1, 2).cpu().numpy()
-        mel_lens = y[1][:n].squeeze().cpu().numpy().sum(axis=1) - 1
+        mel_specs = y[0][::s].transpose(1, 2).cpu().numpy()
+        mel_lens = y[1][::s].squeeze().cpu().numpy().sum(axis=1) - 1
     elif label == 'Reference spectrogram':
         # y: mel_padded, dur_padded, dur_lens, pitch_padded
-        mel_specs = y[0][:n].cpu().numpy()
-        mel_lens = y[1][:n].cpu().numpy().sum(axis=1) - 1
+        mel_specs = y[0][::s].cpu().numpy()
+        if mas:
+            mel_lens = y[2][::s].cpu().numpy()  # output_lengths
+        else:
+            mel_lens = y[1][::s].cpu().numpy().sum(axis=1) - 1
     for mel_spec, mel_len, fname in zip(mel_specs, mel_lens, fnames):
         mel_spec = mel_spec[:, :mel_len]
         utt_id = os.path.splitext(os.path.basename(fname))[0]
-        logger.log_spectrogram_tb(step, '{}/{}'.format(label, utt_id), mel_spec,
-                                  tb_subset='val')
+        logger.log_spectrogram_tb(
+            step, '{}/{}'.format(label, utt_id), mel_spec, tb_subset='val')
 
 
 def generate_audio(y, fnames, step, vocoder=None, sampling_rate=22050, hop_length=256,
-                   n=4, label='Predicted audio'):
+                   n=4, label='Predicted audio', mas=False):
     """Generate audio from spectrograms for n utterances in batch"""
-    n = min(n, len(y[0]))
-    fnames = fnames[:n]
+    bs = len(fnames)
+    n = min(n, bs)
+    s = bs // n
+    fnames = fnames[::s]
     with torch.no_grad():
         if label == 'Predicted audio':
             # y: mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred
-            audios = vocoder(y[0].transpose(1, 2)).cpu().squeeze().numpy()
-            mel_lens = y[1][:n].squeeze().cpu().numpy().sum(axis=1) - 1
+            audios = vocoder(y[0][::s].transpose(1, 2)).cpu().squeeze().numpy()
+            mel_lens = y[1][::s].squeeze().cpu().numpy().sum(axis=1) - 1
         elif label == 'Copy synthesis':
             # y: mel_padded, dur_padded, dur_lens, pitch_padded
-            audios = vocoder(y[0]).cpu().squeeze().numpy()
-            mel_lens = y[1][:n].cpu().numpy().sum(axis=1) - 1
+            audios = vocoder(y[0][::s]).cpu().squeeze().numpy()
+            if mas:
+                mel_lens = y[2][::s].cpu().numpy()  # output_lengths
+            else:
+                mel_lens = y[1][::s].cpu().numpy().sum(axis=1) - 1
         elif label == 'Reference audio':
             audios = []
             for fname in fnames:
                 wav = re.sub(r'mels/(.+)\.pt', r'wavs/\1.wav', fname)
                 audio, _ = librosa.load(wav, sr=sampling_rate)
                 audios.append(audio)
-            mel_lens = y[1][:n].cpu().numpy().sum(axis=1) - 1
+            if mas:
+                mel_lens = y[2][::s].cpu().numpy()  # output_lengths
+            else:
+                mel_lens = y[1][::s].cpu().numpy().sum(axis=1) - 1
     for audio, mel_len, fname in zip(audios, mel_lens, fnames):
         audio = audio[:mel_len * hop_length]
         audio = audio / np.max(np.abs(audio))
         utt_id = os.path.splitext(os.path.basename(fname))[0]
-        logger.log_audio_tb(step, '{}/{}'.format(label, utt_id), audio, sampling_rate,
-                            tb_subset='val')
+        logger.log_audio_tb(
+            step, '{}/{}'.format(label, utt_id), audio, sampling_rate, tb_subset='val')
+
+
+def plot_attn_maps(y, fnames, step, n=4, label='Predicted attention'):
+    bs = len(fnames)
+    n = min(n, bs)
+    s = bs // n
+    fnames = fnames[::s]
+    _, dec_mask, *_, attn_softs, attn_hards, attn_hard_durs, _ = y
+    attn_softs = attn_softs[::s].cpu().numpy()
+    attn_hards = attn_hards[::s].cpu().numpy()
+    attn_hard_durs = attn_hard_durs[::s].cpu().numpy()
+    text_lens = np.count_nonzero(attn_hard_durs, 1)
+    mel_lens = dec_mask[::s].cpu().numpy().squeeze(2).sum(1)
+    for attn_soft, attn_hard, mel_len, text_len, fname in zip(
+            attn_softs, attn_hards, mel_lens, text_lens, fnames):
+        attn_soft = attn_soft[:,:mel_len,:text_len].squeeze(0).transpose()
+        attn_hard = attn_hard[:,:mel_len,:text_len].squeeze(0).transpose()
+        utt_id = os.path.splitext(os.path.basename(fname))[0]
+        logger.log_attn_maps_tb(
+            step, '{}/{}'.format(label, utt_id), attn_soft, attn_hard, tb_subset='val')
 
 
 def adjust_learning_rate(total_iter, opt, learning_rate, warmup_iters=None):
@@ -402,7 +467,7 @@ def train(rank, args):
 
     device = torch.device('cuda' if args.cuda else 'cpu')
     model_config = models.get_model_config('FastPitch', args)
-    model = models.get_model('FastPitch', model_config, device)
+    model = models.get_model('FastPitch', model_config, device, forward_mas=args.use_mas)
 
     # Store pitch mean/std as params to translate from Hz during inference
     with open(args.pitch_mean_std_file, 'r') as f:
@@ -448,19 +513,25 @@ def train(rank, args):
     start_epoch = start_epoch[0]
     total_iter = start_iter[0]
 
-    criterion = loss_functions.get_loss_function('FastPitch',
-        dur_predictor_loss_scale=args.dur_predictor_loss_scale,
-        pitch_predictor_loss_scale=args.pitch_predictor_loss_scale)
+    if args.use_mas:
+        criterion = FastPitchMASLoss(
+            dur_predictor_loss_scale=args.dur_predictor_loss_scale,
+            pitch_predictor_loss_scale=args.pitch_predictor_loss_scale,
+            attn_loss_scale=args.attn_loss_scale)
+        attention_kl_loss = AttentionBinarizationLoss()  # L_bin
+    else:
+        criterion = FastPitchLoss(
+            dur_predictor_loss_scale=args.dur_predictor_loss_scale,
+            pitch_predictor_loss_scale=args.pitch_predictor_loss_scale)
+        attention_kl_loss = None  # for validation
+        kl_weight = None
 
-    trainset = data_functions.get_data_loader('FastPitch',
-                                              audiopaths_and_text=args.training_files,
-                                              **vars(args))
-    valset = data_functions.get_data_loader('FastPitch',
-                                            audiopaths_and_text=args.validation_files,
-                                            **vars(args))
-    collate_fn = data_functions.get_collate_function('FastPitch',
-                                                     symbol_type=args.input_type,
-                                                     n_symbols=trainset.n_symbols)
+    trainset = TextMelAliLoader(audiopaths_and_text=args.training_files, **vars(args))
+    valset = TextMelAliLoader(audiopaths_and_text=args.validation_files, **vars(args))
+
+    collate_fn = TextMelAliCollate(
+        symbol_type=args.input_type, n_symbols=trainset.n_symbols, mas=args.use_mas)
+
     if args.distributed_run:
         train_sampler, shuffle = DistributedSampler(trainset), False
     else:
@@ -470,8 +541,6 @@ def train(rank, args):
                               sampler=train_sampler, batch_size=args.batch_size,
                               pin_memory=False, drop_last=True,
                               collate_fn=collate_fn)
-
-    batch_to_gpu = data_functions.get_batch_to_gpu('FastPitch')
 
     vocoder = None
     if args.hifigan_checkpoint:
@@ -485,19 +554,20 @@ def train(rank, args):
     for i, batch in enumerate(val_loader):
         if i > 0:
             break
-        _, y, _ = batch_to_gpu(batch, collate_fn.symbol_type)
+        _, y, _ = batch_to_gpu(batch, collate_fn.symbol_type, mas=args.use_mas)
         # TODO: sort utterances by mel length rather than more variable text length
         # for consistent sample across different experiments
         batch_audiopaths_and_text = sorted(valset.audiopaths_and_text[:args.batch_size],
                                            key=lambda x: len(valset.get_text(x[3])),
                                            reverse=True)
         tb_fnames = [i[0] for i in batch_audiopaths_and_text]
-        plot_spectrograms(y, tb_fnames, total_iter, n=4, label='Reference spectrogram')
+        plot_spectrograms(
+            y, tb_fnames, total_iter, n=4, label='Reference spectrogram', mas=args.use_mas)
         if vocoder is not None:
             generate_audio(y, tb_fnames, total_iter, vocoder, args.sampling_rate,
-                           args.hop_length, n=4, label='Reference audio')
+                           args.hop_length, n=4, label='Reference audio', mas=args.use_mas)
             generate_audio(y, tb_fnames, total_iter, vocoder, args.sampling_rate,
-                           args.hop_length, n=4, label='Copy synthesis')
+                           args.hop_length, n=4, label='Copy synthesis', mas=args.use_mas)
 
     model.train()
 
@@ -510,6 +580,9 @@ def train(rank, args):
         epoch_mel_loss = 0.0
         epoch_dur_loss = 0.0
         epoch_pitch_loss = 0.0
+        epoch_align_loss = 0.0
+        epoch_attn_loss = 0.0
+        epoch_kl_loss = 0.0
         epoch_dur_error = 0.0
         epoch_pitch_error = 0.0
         epoch_num_frames = 0
@@ -539,11 +612,27 @@ def train(rank, args):
 
                 model.zero_grad()
 
-            x, y, num_frames = batch_to_gpu(batch, args.input_type)
+            x, y, num_frames = batch_to_gpu(batch, args.input_type, args.use_mas)
 
             with autocast(enabled=args.amp):
-                y_pred = model(x, use_gt_durations=True)
+                y_pred = model(x, use_gt_durations=(not args.use_mas))
                 loss, meta = criterion(y_pred, y)
+                
+                if args.use_mas:
+                    if epoch >= args.kl_loss_start_epoch:
+                        _, _, _, _, _, _, attn_soft, attn_hard, _, _ = y_pred
+                        binarization_loss = attention_kl_loss(attn_hard, attn_soft)
+                        kl_weight = min((epoch - args.kl_loss_start_epoch) / args.kl_loss_warmup_epochs,
+                                        1.0) * args.kl_loss_weight
+                        meta['kl_loss'] = binarization_loss.clone().detach() * kl_weight
+                        meta['kl_weight'] = kl_weight
+                        loss += kl_weight * binarization_loss
+                    else:
+                        meta['kl_loss'] = torch.zeros_like(loss)
+                        meta['kl_weight'] = 0
+                        kl_weight = 0
+                        binarization_loss = 0
+                    meta['align_loss'] = meta['attn_loss'] + meta['kl_loss']
 
                 loss /= args.gradient_accumulation_steps
 
@@ -600,21 +689,38 @@ def train(rank, args):
                 epoch_pitch_error += iter_pitch_error
                 epoch_num_frames += iter_num_frames
                 epoch_frames_per_sec += iter_num_frames / iter_time
+                if args.use_mas:
+                    iter_align_loss = iter_meta['align_loss'].item()
+                    iter_attn_loss = iter_meta['attn_loss'].item()
+                    iter_kl_loss = iter_meta['kl_loss'].item()
+                    iter_kl_weight = iter_meta['kl_weight']
+                    epoch_align_loss += iter_align_loss
+                    epoch_attn_loss += iter_attn_loss
+                    epoch_kl_loss += iter_kl_loss
 
+                # TODO: factor out logging
+                logger_data = [
+                    ('Loss/Total', iter_loss),
+                    ('Loss/Mel', iter_mel_loss),
+                    ('Loss/Duration', iter_dur_loss),
+                    ('Loss/Pitch', iter_pitch_loss),
+                    #('Error/Duration', iter_dur_error),
+                    #('Error/Pitch', iter_pitch_error),
+                    #('Time/FPS', iter_num_frames / iter_time),
+                    #('Hyperparameters/Learning rate', optimizer.param_groups[0]['lr']),
+                ]
+                if args.use_mas:
+                    logger_data.extend([
+                        ('Loss/Alignment', iter_align_loss),
+                        #('Align/Attention loss', iter_attn_loss),
+                        #('Align/KL loss', iter_kl_loss),
+                        #('Align/KL weight', iter_kl_weight),
+                    ])
+                logger_data.append(('Time/Iter time', iter_time))
                 logger.log((epoch, epoch_iter, num_iters),
                            tb_total_steps=total_iter,
                            subset='train',
-                           data=OrderedDict([
-                               ('Loss/Total', iter_loss),
-                               ('Loss/Mel', iter_mel_loss),
-                               ('Loss/Duration', iter_dur_loss),
-                               ('Loss/Pitch', iter_pitch_loss),
-                               #('Error/Duration', iter_dur_error),
-                               #('Error/Pitch', iter_pitch_error),
-                               #('Time/FPS', iter_num_frames / iter_time),
-                               ('Hyperparameters/Learning rate', optimizer.param_groups[0]['lr']),
-                               ('Time/Iter time', iter_time),
-                               ]),
+                           data=OrderedDict(logger_data)
                 )
 
                 accumulated_steps = 0
@@ -625,30 +731,39 @@ def train(rank, args):
         # Finished epoch
         epoch_time = time.perf_counter() - epoch_start_time
 
+        logger_data = [
+            ('Loss/Total', epoch_loss / epoch_iter),
+            ('Loss/Mel', epoch_mel_loss / epoch_iter),
+            ('Loss/Duration', epoch_dur_loss / epoch_iter),
+            ('Loss/Pitch', epoch_pitch_loss / epoch_iter),
+            #('Error/Duration', epoch_dur_error / epoch_iter),
+            #('Error/Pitch', epoch_pitch_error / epoch_iter),
+            #('Time/FPS', epoch_num_frames / epoch_time),
+        ]
+        if args.use_mas:
+            logger_data.extend([
+                ('Loss/Alignment', epoch_align_loss / epoch_iter),
+                #('Align/Attention loss', epoch_attn_loss / epoch_iter),
+                #('Align/KL loss', epoch_kl_loss / epoch_iter),
+            ])
+        logger_data.append(('Time/Iter time', epoch_time))
         logger.log((epoch,),
                    tb_total_steps=None,
                    subset='train_avg',
-                   data=OrderedDict([
-                       ('Loss/Total', epoch_loss / epoch_iter),
-                       ('Loss/Mel', epoch_mel_loss / epoch_iter),
-                       ('Loss/Duration', epoch_dur_loss / epoch_iter),
-                       ('Loss/Pitch', epoch_pitch_loss / epoch_iter),
-                       #('Error/Duration', epoch_dur_error / epoch_iter),
-                       #('Error/Pitch', epoch_pitch_error / epoch_iter),
-                       #('Time/FPS', epoch_num_frames / epoch_time),
-                       ('Time/Iter time', epoch_time)]),
+                   data=OrderedDict(logger_data)
         )
 
         validate(model, epoch, total_iter, criterion, valset, args.batch_size,
                  collate_fn, args.distributed_run, batch_to_gpu, use_gt_durations=True,
+                 mas=args.use_mas, attention_kl_loss=attention_kl_loss, kl_weight=kl_weight,
                  vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length,
                  audio_interval=args.audio_interval)
 
         if args.ema_decay > 0:
-            validate(ema_model, epoch, total_iter, criterion, valset,
-                     args.batch_size, collate_fn, args.distributed_run, batch_to_gpu,
-                     use_gt_durations=True, ema=True, vocoder=vocoder,
-                     sampling_rate=args.sampling_rate, hop_length=args.hop_length,
+            validate(ema_model, epoch, total_iter, criterion, valset, args.batch_size,
+                     collate_fn, args.distributed_run, batch_to_gpu, use_gt_durations=True, ema=True,
+                     mas=args.use_mas, attention_kl_loss=attention_kl_loss, kl_weight=kl_weight,
+                     vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length,
                      audio_interval=args.audio_interval)
 
         maybe_save_checkpoint(args, model, ema_model, optimizer, scaler,
@@ -656,21 +771,30 @@ def train(rank, args):
         logger.flush()
 
     # Finished training
+    logger_data = [
+        ('Loss/Total', epoch_loss / epoch_iter),
+        ('Loss/Mel', epoch_mel_loss / epoch_iter),
+        ('Loss/Duration', epoch_dur_loss / epoch_iter),
+        ('Loss/Pitch', epoch_pitch_loss / epoch_iter),
+        #('Error/Duration', epoch_dur_error / epoch_iter),
+        #('Error/Pitch', epoch_pitch_error / epoch_iter),
+        #('Time/FPS', epoch_num_frames / epoch_time),
+    ]
+    if args.use_mas:
+        logger_data.extend([
+            ('Loss/Alignment', epoch_align_loss / epoch_iter),
+            #('Align/Attention loss', epoch_attn_loss / epoch_iter),
+            #('Align/KL loss', epoch_kl_loss / epoch_iter),
+        ])
+    logger_data.append(('Time/Iter time', epoch_time))
     logger.log((),
                tb_total_steps=None,
                subset='train_avg',
-               data=OrderedDict([
-                   ('Loss/Total', epoch_loss / epoch_iter),
-                   ('Loss/Mel', epoch_mel_loss / epoch_iter),
-                   ('Loss/Duration', epoch_dur_loss / epoch_iter),
-                   ('Loss/Pitch', epoch_pitch_loss / epoch_iter),
-                   #('Error/Duration', epoch_dur_error / epoch_iter),
-                   #('Error/Pitch', epoch_pitch_error / epoch_iter),
-                   #('Time/FPS', epoch_num_frames / epoch_time),
-                   ('Time/Iter time', epoch_time)]),
+               data=OrderedDict(logger_data)
     )
     validate(model, None, total_iter, criterion, valset, args.batch_size,
              collate_fn, args.distributed_run, batch_to_gpu, use_gt_durations=True,
+             mas=args.use_mas, attention_kl_loss=attention_kl_loss, kl_weight=kl_weight,
              vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length)
 
 

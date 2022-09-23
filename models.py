@@ -59,7 +59,7 @@ def parse_model_args(model_name, parser, add_help=False):
 
 
 def get_model(model_name, model_config, device,
-              forward_is_infer=False, jitable=False):
+              forward_is_infer=False, forward_mas=False, jitable=False):
     """Chooses a model based on name"""
     if model_name == 'FastPitch':
         if jitable:
@@ -77,6 +77,8 @@ def get_model(model_name, model_config, device,
 
     if forward_is_infer and hasattr(model, 'infer'):
         model.forward = model.infer
+    elif forward_mas and hasattr(model, 'forward_mas'):
+        model.forward = model.forward_mas
 
     return model.to(device)
 
@@ -94,6 +96,7 @@ def get_model_config(model_name, args):
             symbols_embedding_dim=args.symbols_embedding_dim,
             # model-wide architecture
             use_sepconv=args.use_sepconv,
+            use_mas=args.use_mas,
             # input FFT
             in_fft_n_layers=args.in_fft_n_layers,
             in_fft_n_heads=args.in_fft_n_heads,

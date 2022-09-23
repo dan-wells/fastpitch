@@ -25,12 +25,15 @@
 #
 # *****************************************************************************
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from common.layers import ConvReLUNorm, SeparableConv
 from common.utils import mask_from_lens
+from fastpitch.alignment import mas_width1
+from fastpitch.attention import ConvAttention
 from fastpitch.transformer import FFTransformer
 
 
@@ -42,7 +45,8 @@ def regulate_len(durations, enc_out, pace=1.0, mel_max_len=None):
     dec_lens = reps.sum(dim=1)
 
     max_len = dec_lens.max()
-    reps_cumsum = torch.cumsum(F.pad(reps, (1, 0, 0, 0), value=0.0), dim=1)[:, None, :]
+    reps_cumsum = torch.cumsum(F.pad(reps, (1, 0, 0, 0), value=0.0),
+                               dim=1)[:, None, :]
     reps_cumsum = reps_cumsum.to(dtype)
 
     range_ = torch.arange(max_len).to(enc_out.device)[None, :, None]
@@ -55,6 +59,22 @@ def regulate_len(durations, enc_out, pace=1.0, mel_max_len=None):
         enc_rep = enc_rep[:, :mel_max_len]
         dec_lens = torch.clamp_max(dec_lens, mel_max_len)
     return enc_rep, dec_lens
+
+
+def average_pitch(pitch, durs):
+    durs_cums_ends = torch.cumsum(durs, dim=1).long()
+    durs_cums_starts = F.pad(durs_cums_ends[:, :-1], (1, 0))
+    pitch_nonzero_cums = F.pad(torch.cumsum(pitch != 0.0, dim=1), (1, 0))
+    pitch_cums = F.pad(torch.cumsum(pitch, dim=1), (1, 0))
+
+    pitch_sums = (torch.gather(pitch_cums, 1, durs_cums_ends)
+                  - torch.gather(pitch_cums, 1, durs_cums_starts)).float()
+    pitch_nelems = (torch.gather(pitch_nonzero_cums, 1, durs_cums_ends)
+                    - torch.gather(pitch_nonzero_cums, 1, durs_cums_starts)).float()
+
+    pitch_avg = torch.where(pitch_nelems == 0.0, pitch_nelems,
+                            pitch_sums / pitch_nelems)
+    return pitch_avg
 
 
 class TemporalPredictor(nn.Module):
@@ -80,8 +100,7 @@ class TemporalPredictor(nn.Module):
 
 class FastPitch(nn.Module):
     def __init__(self, n_mel_channels, symbol_type, n_symbols, padding_idx,
-                 symbols_embedding_dim,
-                 use_sepconv,
+                 symbols_embedding_dim, use_sepconv, use_mas,
                  in_fft_n_layers, in_fft_n_heads, in_fft_d_head,
                  in_fft_conv1d_kernel_size, in_fft_conv1d_filter_size,
                  in_fft_sepconv, in_fft_output_size,
@@ -170,6 +189,34 @@ class FastPitch(nn.Module):
 
         self.proj = nn.Linear(out_fft_output_size, n_mel_channels, bias=True)
 
+        # For monotonic alignment search (see forward_mas)
+        if use_mas:
+            self.attention = ConvAttention(
+                n_mel_channels, 0, symbols_embedding_dim,
+                use_query_proj=True, align_query_enc_type='3xconv')
+
+    def binarize_attention(self, attn, in_lens, out_lens):
+        """For training purposes only. Binarizes attention with MAS.
+           These will no longer recieve a gradient.
+
+        Args:
+            attn: B x 1 x max_mel_len x max_text_len
+        """
+        b_size = attn.shape[0]
+        with torch.no_grad():
+            attn_out_cpu = np.zeros(attn.data.shape, dtype=np.float32)
+            log_attn_cpu = torch.log(attn.data).to(device='cpu', dtype=torch.float32)
+            log_attn_cpu = log_attn_cpu.numpy()
+            out_lens_cpu = out_lens.cpu()
+            in_lens_cpu = in_lens.cpu()
+            for ind in range(b_size):
+                hard_attn = mas_width1(
+                    log_attn_cpu[ind, 0, :out_lens_cpu[ind], :in_lens_cpu[ind]])
+                attn_out_cpu[ind, 0, :out_lens_cpu[ind], :in_lens_cpu[ind]] = hard_attn
+            attn_out = torch.tensor(
+                attn_out_cpu, device=attn.get_device(), dtype=attn.dtype)
+        return attn_out
+
     def forward(self, inputs, use_gt_durations=True, use_gt_pitch=True,
                 pace=1.0, max_duration=75):
         inputs, _, mel_tgt, _, dur_tgt, _, pitch_tgt, speaker = inputs
@@ -184,7 +231,6 @@ class FastPitch(nn.Module):
 
         # Input FFT
         enc_out, enc_mask = self.encoder(inputs, conditioning=spk_emb)
-
 
         # Predict durations
         log_dur_pred = self.duration_predictor(enc_out, enc_mask)
@@ -207,6 +253,68 @@ class FastPitch(nn.Module):
         dec_out, dec_mask = self.decoder(len_regulated, dec_lens)
         mel_out = self.proj(dec_out)
         return mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred
+
+    def forward_mas(self, inputs, use_gt_pitch=True, pace=1.0, max_duration=75,
+                    use_gt_durations=None):  # compatibility
+        (inputs, input_lens, mel_tgt, mel_lens, attn_prior, _, pitch_dense, speaker) = inputs
+
+        text_max_len = inputs.size(1)
+        mel_max_len = mel_tgt.size(2)
+
+        # Calculate speaker embedding
+        if self.speaker_emb is None:
+            spk_emb = 0
+        else:
+            spk_emb = self.speaker_emb(speaker).unsqueeze(1)
+            spk_emb.mul_(self.speaker_emb_weight)
+
+        # Input FFT
+        enc_out, enc_mask = self.encoder(inputs, conditioning=spk_emb)
+
+        # Predict durations
+        log_dur_pred = self.duration_predictor(enc_out, enc_mask).squeeze(-1)
+        dur_pred = torch.clamp(torch.exp(log_dur_pred) - 1, 0, max_duration)
+
+        # Predict pitch
+        pitch_pred = self.pitch_predictor(enc_out, enc_mask)
+        #print(pitch_pred, pitch_pred.shape)
+
+        # Alignment
+        text_emb = self.encoder.word_emb(inputs)
+
+        # make sure to do the alignments before folding
+        attn_mask = mask_from_lens(input_lens, max_len=text_max_len)
+        attn_mask = attn_mask[..., None] == 0
+        # attn_mask should be 1 for unused timesteps in the text_enc_w_spkvec tensor
+
+        attn_soft, attn_logprob = self.attention(
+            mel_tgt, text_emb.permute(0, 2, 1), mel_lens, attn_mask,
+            key_lens=input_lens, keys_encoded=enc_out, attn_prior=attn_prior)
+
+        attn_hard = self.binarize_attention(attn_soft, input_lens, mel_lens)
+
+        # Viterbi --> durations
+        attn_hard_dur = attn_hard.sum(2)[:, 0, :]
+        dur_tgt = attn_hard_dur
+        assert torch.all(torch.eq(dur_tgt.sum(dim=1), mel_lens))
+
+        # Average pitch over characters
+        pitch_tgt = average_pitch(pitch_dense, dur_tgt)
+
+        if use_gt_pitch and pitch_tgt is not None:
+            pitch_emb = self.pitch_emb(pitch_tgt.unsqueeze(1))
+        else:
+            pitch_emb = self.pitch_emb(pitch_pred.unsqueeze(1))
+        enc_out = enc_out + pitch_emb.transpose(1, 2)
+
+        len_regulated, dec_lens = regulate_len(
+            dur_tgt, enc_out, pace, mel_max_len)
+
+        # Output FFT
+        dec_out, dec_mask = self.decoder(len_regulated, dec_lens)
+        mel_out = self.proj(dec_out)
+        return (mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred,
+                pitch_tgt, attn_soft, attn_hard, attn_hard_dur, attn_logprob)
 
     def infer(self, inputs, pace=1.0, dur_tgt=None, pitch_tgt=None,
               pitch_transform=None, max_duration=75, speaker=0):

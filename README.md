@@ -1,22 +1,14 @@
 # FastPitch 1.0 for PyTorch
 
-This repository is based on NVIDIA's reference implementation of FastPitch 1.0,
+This repository is based on NVIDIA's reference implementation of FastPitch,
 extracted from their [DeepLearningExamples](https://github.com/NVIDIA/DeepLearningExamples) repository.
-
-The code was forked from commit [`49e23b4`](https://github.com/NVIDIA/DeepLearningExamples/tree/49e23b4597a6fca461321a085d8eb8abf1e215e2/PyTorch/SpeechSynthesis/FastPitch),
-but includes such changes from upstream as we find to taste along with additional
-modifications made for our own work. For now we maintain the approach outlined
-in the [original paper](https://ieeexplore.ieee.org/abstract/document/9413889)
-with explicit duration targets from forced alignment used during training,
-rather than the [joint alignment learning approach](https://arxiv.org/abs/2108.10447)
-added later (FastPitch 1.1 in the source repo).
 
 ## Data preparation
 
 FastPitch learns to predict mel-scale spectrograms from input symbol sequences
 (e.g. text or phones), with explicit duration and pitch prediction per symbol.
-You can use `prepare_dataset.py` to extract target features given a list of
-audio files and corresponding forced alignments:
+For example, you can use `prepare_dataset.py` to extract target features given a
+list of audio files and corresponding forced alignments:
 
 ```sh
 python prepare_dataset.py \
@@ -115,23 +107,6 @@ Additional notes:
       intuitive text input while remaining consistent with durations extracted
       from character-level TextGrid alignments.
 
-### Forced alignment
-
-We rely on forced alignment for extracting target durations per input symbol,
-and subsequently calculating average pitch values per the same. Given audio
-files, transcripts and a pronunciation lexicon (mapping words to phone strings
-or just character sequences, depending on your desired input), you could
-generate the required
-[TextGrid alignment files](https://www.fon.hum.uva.nl/praat/manual/TextGrid_file_formats.html)
-per utterance using a tool such as the
-[Montreal Forced Aligner](https://github.com/MontrealCorpusTools/Montreal-Forced-Aligner)
-or our own [KISS Aligner](https://github.com/dan-wells/kiss-aligner).
-
-Alternatively, we can extract frame-level durations from repeated sequences of
-input symbols also specified at the frame level by run-length encoding. This is
-the expected method to extract duration targets from HuBERT code sequences when
-using `--input-type unit`, for example.
-
 ### Acoustic feature extraction
 
 Mel spectrogram feature extraction is defined by several parameters passed to
@@ -169,18 +144,59 @@ Additional options are available for applying peak normalization to audio data
 (for example if it was collected across multiple recording sessions) or for
 trimming excessive leading or trailing silences found during forced alignment.
 
+### Duration targets
+
+We support three methods for providing duration targets during training:
+
+- Reading segment durations from forced alignments provided in
+  Praat TextGrid format
+- Run-length encoding frame-level input symbol sequences
+- Monotonic alignment search without explicit targets
+
+**Forced alignment:**
+Given audio files, transcripts and a pronunciation lexicon (mapping words to
+phone strings or just character sequences, depending on your desired input), you
+could generate the required [TextGrid alignment files](https://www.fon.hum.uva.nl/praat/manual/TextGrid_file_formats.html)
+per utterance using a tool such as the [Montreal Forced Aligner](https://github.com/MontrealCorpusTools/Montreal-Forced-Aligner)
+or our own [KISS Aligner](https://github.com/dan-wells/kiss-aligner).
+Then, pass `--durations-from textgrid` to `prepare_dataset.py` to extract
+durations per input symbol and save to disk.
+This approach is similar to that in the
+[original FastPitch paper](https://ieeexplore.ieee.org/abstract/document/9413889).
+
+**Run-length encoding:**
+Alternatively, we can extract durations from repeated sequences of input symbols
+also specified at the frame level by run-length encoding. This is the expected
+method to extract symbol-level duration targets from HuBERT code sequences when
+using `--input-type unit`, for example. Pass `--durations-from unit_rle` to use
+this method.
+
+**Monotonic alignment search:**
+Instead of providing explicit duration targets, we can also use monotonic
+alignment search (MAS) to learn the correspondence between input symbols and
+acoustic features during training. This approach follows the implementation from
+FastPitch 1.1 in the source repo, as described in [this paper](https://ieeexplore.ieee.org/document/9747707).
+Pass `--durations-from attn_prior` to `prepare_dataset.py` and `--use-mas` to
+`train.py` to use this method. In this case, diagonal attention priors are saved
+to disk in the '`durations`' data directory for each utterance.
+
 ### Pitch estimation
 
-We default to the
-[YIN algorithm](https://librosa.org/doc/main/generated/librosa.yin.html)
+We default to the [YIN algorithm](https://librosa.org/doc/main/generated/librosa.yin.html)
 for fundamental frequency estimation. Framewise estimates are averaged per input
 symbol for easier interpretation and more stable performance.
 
-We also have an option to use the more accurate
-[probabilistic YIN](https://librosa.org/doc/main/generated/librosa.pyin.html),
+We also have an option to use the more accurate [probabilistic YIN](https://librosa.org/doc/main/generated/librosa.pyin.html),
 but this algorithm runs consderably slower. If you know the expected pitch range
 in your data, then you can narrow the corresponding hypothesis space for pYIN by
 adjusting `--pitch-f{min,max}` (defaults 50--600 Hz) to speed things up a bit.
+
+Framewise pitch values are averaged per input symbol to provide pitch targets
+during training. This is done during data pre-processing when extracting target
+durations from TextGrid alignments or by run-length encoding input symbol
+sequences, and the character-level pitch values are saved to disk in this case.
+When training with MAS, we save frame-level pitch values to disk and average
+them online during training according to discovered alignments.
 
 ## Model training
 
@@ -210,14 +226,15 @@ embeddings. Input metadata files should then include integer speaker IDs as the
 final field on each line, with IDs ranging between [0, `n-speakers` - 1]. You
 can assign integer speaker IDs using `scripts/add_speaker_id_to_meta.py`.
 
+To train using monotonic alignment search instead of passing explicit input
+symbol duration targets, pass `--use-mas`. 
+
 To reduce model size with (probably) limited impact on performance, pass
 `--use-sepconv` to replace all convolutional layers with depthwise separable
-convolutions.
-Additional options are available for automatic mixed precision (AMP) and
-gradient accumulation.
-We also support data-parallel distributed training at least on a single node --
-just set `CUDA_VISIBLE_DEVICES` and point to a free port on your machine using
-`--master-{addr,port}`.
+convolutions. Additional options are available for automatic mixed precision
+(AMP) and gradient accumulation. We also support data-parallel distributed
+training at least on a single node -- just set `CUDA_VISIBLE_DEVICES` and point
+to a free port on your machine using `--master-{addr,port}`.
 
 ## Synthesizing speech
 
@@ -272,7 +289,8 @@ includes a `speaker` field then this will take precedence, and individual
 utterances can be synthesized each using a different speaker's voice.
 
 If your model checkpoint uses depthwise separable convolutional layers, then
-also pass `--use-sepconv` to `inference.py`.
+also pass `--use-sepconv` to `inference.py`. Likewise, if trained with monotonic
+alignment search then pass `--use-mas` to match checkpoint model architecture.
 
 ### Vocoder options
 

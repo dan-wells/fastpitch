@@ -26,6 +26,7 @@
 # *****************************************************************************
 
 import argparse
+import functools
 import json
 import os
 import time
@@ -37,6 +38,8 @@ import torch
 import dllogger as DLLogger
 import numpy as np
 from dllogger import StdOutBackend, JSONStreamBackend, Verbosity
+from scipy import ndimage
+from scipy.stats import betabinom
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -94,7 +97,7 @@ def parse_args(parser):
     parser.add_argument('--pitch-std', default=None,
                         help='Standard deviation to normalize extracted pitch')
     parser.add_argument('--durations-from', type=str, default='',
-                        choices=['textgrid', 'unit_rle'],
+                        choices=['textgrid', 'unit_rle', 'attn_prior'],
                         help='Extract symbol durations from Praat TextGrids or '
                         'by run-length encoding quantized unit sequences')
     parser.add_argument('--trim-silences', default=None, type=float,
@@ -202,6 +205,50 @@ def run_length_encode(symbols):
     return units, run_lengths
 
 
+class BetaBinomialInterpolator:
+    """Interpolates alignment prior matrices to save computation.
+
+    Calculating beta-binomial priors is costly. Instead cache popular sizes
+    and use img interpolation to get priors faster.
+    """
+    def __init__(self, round_mel_len_to=100, round_text_len_to=20):
+        self.round_mel_len_to = round_mel_len_to
+        self.round_text_len_to = round_text_len_to
+        self.bank = functools.lru_cache(beta_binomial_prior_distribution)
+
+    def round(self, val, to):
+        return max(1, int(np.round((val + 1) / to))) * to
+
+    def __call__(self, w, h):
+        bw = self.round(w, to=self.round_mel_len_to)
+        bh = self.round(h, to=self.round_text_len_to)
+        ret = ndimage.zoom(self.bank(bw, bh).T, zoom=(w / bw, h / bh), order=1)
+        assert ret.shape[0] == w, ret.shape
+        assert ret.shape[1] == h, ret.shape
+        return ret
+
+
+def beta_binomial_prior_distribution(phoneme_count, mel_count, scaling=1.0):
+    P = phoneme_count
+    M = mel_count
+    x = np.arange(0, P)
+    mel_text_probs = []
+    for i in range(1, M+1):
+        a, b = scaling * i, scaling * (M + 1 - i)
+        rv = betabinom(P, a, b)
+        mel_i_prob = rv.pmf(x)
+        mel_text_probs.append(mel_i_prob)
+    return np.array(mel_text_probs)
+
+
+def extract_duration_prior(text_len, mel_len):
+    binomial_interpolator = BetaBinomialInterpolator()
+    attn_prior = binomial_interpolator(mel_len, text_len)
+    #attn_prior = beta_binomial_prior_distribution(text_len, mel_len)
+    assert mel_len == attn_prior.shape[0]
+    return attn_prior
+
+
 def extract_pitches(fname, durations, dataset_path, fmin=40, fmax=600,
                     sr=None, hop_length=256, method='yin', start=None, end=None):
     fpath = os.path.join(dataset_path, 'pitches', fname + '.pt')
@@ -211,11 +258,8 @@ def extract_pitches(fname, durations, dataset_path, fmin=40, fmax=600,
     return pitches
 
 
-def calculate_pitch(wav, durs, fmin=40, fmax=600, sr=None, hop_length=256,
+def calculate_pitch(wav, mel_len, fmin=40, fmax=600, sr=None, hop_length=256,
                     method='yin', start=None, end=None):
-    durs = np.array(durs)
-    mel_len = durs.sum()
-    durs_cum = np.cumsum(np.pad(durs, (1, 0)))
     try:
         trimmed_dur = end - start
     except TypeError:
@@ -229,8 +273,13 @@ def calculate_pitch(wav, durs, fmin=40, fmax=600, sr=None, hop_length=256,
         pitch, voiced_flags, voiced_probs  = librosa.pyin(
             snd, fmin=fmin, fmax=fmax, sr=sr, hop_length=hop_length, fill_na=0.0)
     assert np.abs(mel_len - pitch.shape[0]) <= 1.0
+    return pitch
 
-    # Average pitch over characters
+
+def average_pitch_per_symbol(pitch, durs, mel_len):
+    durs = np.array(durs)
+    assert durs.sum() == mel_len
+    durs_cum = np.cumsum(np.pad(durs, (1, 0)))
     pitch_char = np.zeros((durs.shape[0],), dtype=float)
     for idx, a, b in zip(range(mel_len), durs_cum[:-1], durs_cum[1:]):
         values = pitch[a:b][np.where(pitch[a:b] != 0.0)[0]]
@@ -345,22 +394,29 @@ def main():
         fpath = os.path.join(args.dataset_path, 'mels', fname + '.pt')
         torch.save(mel, fpath)
 
+        start_time, end_time = None, None
         if args.durations_from == 'textgrid':
             durations, text, start_time, end_time = extract_durs_from_textgrid(
                 fname, args.dataset_path, args.sampling_rate, args.hop_length, mel_len)
         elif args.durations_from == 'unit_rle':
             durations, text = extract_durs_from_unit_sequence(
                 fname, args.dataset_path, text, mel_len)
-            start_time, end_time = None, None
+        elif args.durations_from == 'attn_prior':
+            durations = extract_duration_prior(text_len, mel_len)
+            # TODO: make sure this works for all input types, only tested with phones
+            text = [str(dataset.tp.id_to_symbol[int(i)]) for i in text]
+            assert len(text) == durations.shape[1]
         fpath = os.path.join(args.dataset_path, 'durations', fname + '.pt')
         torch.save(torch.LongTensor(durations), fpath)
         # texts are modified here: silences from textgrids, run-length encoding of units
         fname_text[fname] = text
 
         pitches = extract_pitches(
-            fname, durations, args.dataset_path,
+            fname, mel_len, args.dataset_path,
             args.pitch_fmin, args.pitch_fmax, args.sampling_rate, args.hop_length,
             args.pitch_method, start_time, end_time)
+        if args.durations_from != 'attn_prior':
+            pitches = average_pitch_per_symbol(pitches, durations, mel_len)
         fname_pitch[fname] = pitches
 
         if args.trim_silences is not None:
