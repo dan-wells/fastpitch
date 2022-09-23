@@ -104,6 +104,11 @@ def stdout_metric_format(metric, metadata, value):
     return "| " + " ".join(fields)
 
 
+def prefix_format(timestamp):
+    timestamp = timestamp.strftime('%Y-%m-%d %H:%M:%S')
+    return "DLL {} - ".format(timestamp)
+
+
 def init(log_fpath, log_dir, enabled=True, tb_subsets=[], **tb_kw):
 
     if enabled:
@@ -111,7 +116,8 @@ def init(log_fpath, log_dir, enabled=True, tb_subsets=[], **tb_kw):
                                       unique_log_fpath(log_fpath)),
                     StdOutBackend(Verbosity.VERBOSE,
                                   step_format=stdout_step_format,
-                                  metric_format=stdout_metric_format)]
+                                  metric_format=stdout_metric_format,
+                                  prefix_format=prefix_format)]
     else:
         backends = []
 
