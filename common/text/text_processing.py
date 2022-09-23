@@ -1,7 +1,10 @@
 """ adapted from https://github.com/keithito/tacotron """
+
 import re
+
 import numpy as np
 import panphon
+
 from . import cleaners
 from . import cmudict
 from .numerical import _currency_re, _expand_currency
