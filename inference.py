@@ -48,10 +48,6 @@ from common.tb_dllogger import (init_inference_metadata, stdout_metric_format,
 from common.text.symbols import get_pad_idx
 from common.text.text_processing import TextProcessing, PhoneProcessing, UnitProcessing
 from pitch_transform import pitch_transform_custom
-from waveglow import model as glow
-from waveglow.denoiser import Denoiser
-
-sys.modules['glow'] = glow
 
 
 def parse_args(parser):
@@ -69,15 +65,9 @@ def parse_args(parser):
     parser.add_argument('--cudnn-benchmark', action='store_true',
                         help='Enable cudnn benchmark mode')
     parser.add_argument('--fastpitch', type=str, default='',
-                        help='Full path to the generator checkpoint file (skip to use ground truth mels)')
-    parser.add_argument('--vocoder', type=str, default='', choices=['WaveGlow', 'HiFi-GAN'],
-                        help='Vocoder model type if generating audio (skip to only generate mels)')
-    parser.add_argument('--vocoder-checkpoint', type=str, default='',
-                        help='Full path to vocoder model checkpoint file')
-    parser.add_argument('-s', '--sigma-infer', default=0.9, type=float,
-                        help='WaveGlow sigma')
-    parser.add_argument('-d', '--denoising-strength', default=0.01, type=float,
-                        help='WaveGlow denoising')
+                        help='Path to FastPitch checkpoint file (skip to use ground truth mels)')
+    parser.add_argument('--hifigan', type=str, default='',
+                        help='Path to HiFi-GAN generator checkpoint (skip to only generate mels)')
     parser.add_argument('--hifigan-config', type=str, default='',
                         help='Path to HiFi-GAN config file')
     parser.add_argument('-sr', '--sampling-rate', default=22050, type=int,
@@ -179,11 +169,7 @@ def load_and_setup_model(model_name, parser, checkpoint, amp, device,
     if checkpoint is not None:
         model = load_model_from_ckpt(checkpoint, ema, model)
 
-    if model_name == "WaveGlow":
-        for k, m in model.named_modules():
-            m._non_persistent_buffers_set = set()  # pytorch 1.6.0 compatability
-        model = model.remove_weightnorm(model)
-    elif model_name == "HiFi-GAN":
+    if model_name == "HiFi-GAN":
         model.remove_weight_norm()
 
     if amp:
@@ -349,15 +335,12 @@ def main():
     else:
         generator = None
 
-    if args.vocoder:
+    if args.hifigan:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             vocoder = load_and_setup_model(
-                args.vocoder, parser, args.vocoder_checkpoint, args.amp, device,
+                'HiFi-GAN', parser, args.hifigan, args.amp, device,
                 unk_args=unk_args, forward_is_infer=True, ema=args.ema)
-        if args.vocoder == 'WaveGlow':
-            denoiser = Denoiser(vocoder).to(device)
-            vocoder = getattr(vocoder, 'infer', vocoder)
     else:
         vocoder = None
 
@@ -379,11 +362,7 @@ def main():
                     b = batches[0]
                     mel, *_ = generator(b['text'])
                 if vocoder is not None:
-                    if args.vocoder == 'WaveGlow':
-                        audios = vocoder(mel, sigma=args.sigma_infer).float()
-                        _ = denoiser(audios, strength=args.denoising_strength)
-                    elif args.vocoder == 'HiFi-GAN':
-                        audios = vocoder(mel)
+                    audios = vocoder(mel)
 
     gen_measures = MeasureTime(cuda=args.cuda)
     vocoder_measures = MeasureTime(cuda=args.cuda)
@@ -434,14 +413,8 @@ def main():
 
             if vocoder is not None:
                 with torch.no_grad(), vocoder_measures:
-                    if args.vocoder == 'WaveGlow':
-                        audios = vocoder(mel, sigma=args.sigma_infer)
-                        audios = denoiser(audios.float(),
-                                          strength=args.denoising_strength
-                                          ).squeeze(1)
-                    elif args.vocoder == 'HiFi-GAN':
-                        audios = vocoder(mel)
-                        audios = audios.squeeze()
+                    audios = vocoder(mel)
+                    audios = audios.squeeze()
 
                 all_utterances += len(audios)
                 # TODO: something goes wrong here for small batches?

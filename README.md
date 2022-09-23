@@ -256,8 +256,7 @@ not matter):
 - `duration`, path to load reference duration values
 
 To synthesize speech from IPA phone transcripts using the final checkpoint from
-our `train.py` run above, using a pre-trained WaveGlow vocoder (for example
-downloaded using `scripts/download_waveglow.sh`):
+our `train.py` run above, using a pre-trained HiFi-GAN vocoder:
 
 ```sh
 python inference.py \
@@ -266,9 +265,8 @@ python inference.py \
   --fastpitch $CHECKPOINT_DIR/FastPitch_checkpoint_100.pt \
   --input-type phone \
   --symbol-set ipa \
-  --vocoder WaveGlow \
-  --vocoder-checkpoint pretrained_models/waveglow/nvidia_waveglow256pyt_fp16.pt \
-  --wn-channels 256 \
+  --hifigan $PATH_TO_HIFIGAN_CHECKPOINT \
+  --hifigan-config hifigan/config/config_v1.json \  # 22.05 kHz audio
   --cuda
 ```
 
@@ -292,28 +290,7 @@ If your model checkpoint uses depthwise separable convolutional layers, then
 also pass `--use-sepconv` to `inference.py`. Likewise, if trained with monotonic
 alignment search then pass `--use-mas` to match checkpoint model architecture.
 
-### Vocoder options
-
-The WaveGlow vocoder used in the example above, downloaded through
-`scripts/download_waveglow.sh`, is a pre-trained checkpoint from NVIDIA using
-the [LJ Speech](https://keithito.com/LJ-Speech-Dataset/) dataset at 22.05 kHz, so
-make sure this matches your training data before using this particular model.
-The `--wn-channels` parameter is also specific to WaveGlow models (so you will
-find it documented only in `waveglow/arg_parser.py`).
-
-Alternatively, we support [HiFi-GAN](https://github.com/jik876/hifi-gan)
-vocoders, for example using the pre-trained `UNIVERSAL_V1` model:
-
-```sh
-python inference.py \
-  ...
-  --vocoder HiFi-GAN \
-  --vocoder-checkpoint $UNIVERSAL_V1/g_02500000 \
-  --hifigan-config $UNIVERSAL_V1/config.json \
-  ...
-```
-
-It should be possible to run any checkpoint trained from the original HiFi-GAN
+It should be possible to run any HiFi-GAN model checkpoint trained from the original
 repo, given an appropriate config file. We also have a
 [sample config](https://github.com/dan-wells/hifi-gan/blob/master/config/config_v1_16k_50Hz.json)
 for 16 kHz audio with a 50 Hz frame shift, again to match audio preprocessing

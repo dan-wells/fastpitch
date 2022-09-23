@@ -168,7 +168,7 @@ def init_inference_metadata():
                   ('letters/s', None, ':>10.2f')]
 
     for perc in ['', 'avg', '90%', '95%', '99%']:
-        for model in ['fastpitch', 'waveglow', '']:
+        for model in ['fastpitch', 'hifi-gan', '']:
             for mod, unit, format in modalities:
 
                 name = f'{perc} {model} {mod}'.strip().replace('  ', ' ')

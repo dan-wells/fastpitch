@@ -37,7 +37,6 @@ from fastpitch.model import FastPitch
 from fastpitch.model_jit import FastPitchJIT
 from hifigan import AttrDict
 from hifigan.model import Generator as HiFiGanGenerator
-from waveglow.model import WaveGlow
 
 
 def parse_model_args(model_name, parser, add_help=False):
@@ -47,9 +46,6 @@ def parse_model_args(model_name, parser, add_help=False):
     elif model_name == 'HiFi-GAN':
         from hifigan.arg_parser import parse_hifigan_args
         return parse_hifigan_args(parser, add_help)
-    elif model_name == 'WaveGlow':
-        from waveglow.arg_parser import parse_waveglow_args
-        return parse_waveglow_args(parser, add_help)
     else:
         raise NotImplementedError(model_name)
 
@@ -64,8 +60,6 @@ def get_model(model_name, model_config, device,
             model = FastPitch(**model_config)
     elif model_name == 'HiFi-GAN':
         model = HiFiGanGenerator(model_config)
-    elif model_name == 'WaveGlow':
-        model = WaveGlow(**model_config)
     else:
         raise NotImplementedError(model_name)
 
@@ -137,20 +131,6 @@ def get_model_config(model_name, args):
         with open(args.hifigan_config) as f:
             model_config = json.load(f)
         model_config = AttrDict(model_config)
-        return model_config
-    elif model_name == 'WaveGlow':
-        model_config = dict(
-            n_mel_channels=args.n_mel_channels,
-            n_flows=args.flows,
-            n_group=args.groups,
-            n_early_every=args.early_every,
-            n_early_size=args.early_size,
-            WN_config=dict(
-                n_layers=args.wn_layers,
-                kernel_size=args.wn_kernel_size,
-                n_channels=args.wn_channels
-            )
-        )
         return model_config
     else:
         raise NotImplementedError(model_name)
