@@ -403,10 +403,8 @@ def main():
             if vocoder is not None:
                 with torch.no_grad(), vocoder_measures:
                     audios = vocoder(mel)
-                    audios = audios.squeeze()
+                    audios = audios.squeeze(1)
 
-                # TODO: something goes wrong here for small batches?
-                # e.g. `-bs 1` or `-bs 16` with 18 utterances in meta
                 all_samples += sum(audio.size(0) for audio in audios)
                 vocoder_infer_perf = (
                     audios.size(0) * audios.size(1) / vocoder_measures[-1])
