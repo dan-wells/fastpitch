@@ -396,7 +396,7 @@ def main():
                         elif 'output' in b:
                             fname = os.path.splitext(b['output'][i])[0] + '.pt'
                         else:
-                            fname = f'mel_{(n * args.batch_size) + i}.pt'
+                            fname = f'mel_{all_utterances + i}.pt'
                         mel_path = os.path.join(args.output, fname)
                         torch.save(_mel.cpu(), mel_path)
 
@@ -405,13 +405,11 @@ def main():
                     audios = vocoder(mel)
                     audios = audios.squeeze()
 
-                all_utterances += len(audios)
                 # TODO: something goes wrong here for small batches?
                 # e.g. `-bs 1` or `-bs 16` with 18 utterances in meta
                 all_samples += sum(audio.size(0) for audio in audios)
                 vocoder_infer_perf = (
                     audios.size(0) * audios.size(1) / vocoder_measures[-1])
-
 
                 if args.output is not None and reps == 1:
                     for i, audio in enumerate(audios):
@@ -423,10 +421,11 @@ def main():
                             audio[-fade_len:] *= fade_w.to(audio.device)
 
                         audio = audio / torch.max(torch.abs(audio))
-                        fname = b['output'][i] if 'output' in b else f'audio_{(n * args.batch_size) + i}.wav'
+                        fname = b['output'][i] if 'output' in b else f'audio_{all_utterances + i}.wav'
                         audio_path = os.path.join(args.output, fname)
                         write(audio_path, args.sampling_rate, audio.cpu().numpy())
 
+                all_utterances += len(audios)
 
     log_enabled = True
     if generator is not None:
