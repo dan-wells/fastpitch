@@ -48,39 +48,55 @@ class PhoneProcessing(object):
         self.sil_symbols = ['sp', 'spn', 'sil']
         self.sil_pf_vec = [1 if i == 'sil' else 0 for i in self.symbols]
 
+    def phones_to_ids(self, text):
+        # TODO: could also handle X-SAMPA this way if mapping through IPA
+        # using panphon
+        if self.symbol_set.startswith('ipa'):
+            # Text can be either space-delimited phone strings or phonetized
+            # words, e.g. 'sp ðə kæt sp'
+            symbol_ids = []
+            for word in text.split(' '):
+                if word in self.sil_symbols:
+                    symbol_ids.append(self.symbol_to_id[word])
+                else:
+                    for s in self.ft.ipa_segs(word):
+                        symbol_ids.append(self.symbol_to_id[s])
+            return symbol_ids
+        else:
+            # Assuming space-delimited phone strings, e.g. 'sp D @ k { t sp'
+            return [self.symbol_to_id[s] for s in text.split(' ')]
+
+    def phones_to_pfs(self, text):
+        feats = []
+        for s in text.split(' '):
+            if s in self.sil_symbols:
+                feats.append(self.sil_pf_vec)
+            elif self.symbol_set == 'combilex':
+                pf_vec = self.ft.fts(_combilex_to_ipa[s]).numeric()
+                pf_vec += [0] # add unspecified silence feature
+                feats.append(pf_vec)
+            else:
+                pf_vecs = self.ft.word_to_vector_list(
+                    s, numeric=True, xsampa=self.symbol_set=='xsampa')
+                pf_vecs = [i + [0] for i in pf_vecs]
+                feats.extend(pf_vecs)
+        return feats
+
     def encode_text(self, text):
         if self.symbol_type == 'pf':
-            feats = []
-            for s in text.split(' '):
-                if s in self.sil_symbols:
-                    feats.append(self.sil_pf_vec)
-                elif self.symbol_set == 'combilex':
-                    pf_vec = self.ft.fts(_combilex_to_ipa[s]).numeric()
-                    pf_vec += [0] # add unspecified silence feature
-                    feats.append(pf_vec)
-                else:
-                    pf_vecs = self.ft.word_to_vector_list(
-                        s, numeric=True, xsampa=self.symbol_set=='xsampa')
-                    pf_vecs = [i + [0] for i in pf_vecs]
-                    feats.extend(pf_vecs)
-            return feats
+            text_encoded = self.phones_to_pfs(text)
         else:
-            # TODO: could also handle X-SAMPA this way if mapping through IPA
-            # using panphon
-            if self.symbol_set.startswith('ipa'):
-                # Text can be either space-delimited phone strings or phonetized
-                # words, e.g. 'sp ðə kæt sp'
-                symbol_ids = []
-                for word in text.split(' '):
-                    if word in self.sil_symbols:
-                        symbol_ids.append(self.symbol_to_id[word])
-                    else:
-                        for s in self.ft.ipa_segs(word):
-                            symbol_ids.append(self.symbol_to_id[s])
-                return symbol_ids
-            else:
-                # Assuming space-delimited phone strings, e.g. 'sp D @ k { t sp'
-                return [self.symbol_to_id[s] for s in text.split(' ')]
+            text_encoded = self.phones_to_ids(text)
+        return text_encoded
+
+
+class UnitProcessing(object):
+    def __init__(self, symbol_set, symbol_type):
+        self.symbols = get_symbols(symbol_set, symbol_type)
+
+    def encode_text(self, text):
+        # embedding table indices should match 0-based unit IDs
+        return [int(i) for i in text.split(' ')]
 
 
 # TODO: Handle simple text input with spaces between words, but expanding
@@ -226,11 +242,3 @@ class TextProcessing(object):
             return text_encoded, text_clean, text_arpabet
 
         return text_encoded
-
-class UnitProcessing(object):
-    def __init__(self, symbol_set, symbol_type):
-        self.symbols = get_symbols(symbol_set, symbol_type)
-
-    def encode_text(self, text):
-        # embedding table indices should match 0-based unit IDs
-        return [int(i) for i in text.split(' ')]
