@@ -129,11 +129,12 @@ def get_symbols(symbol_set='english_basic', symbol_type=None):
         symbols = _pad + _silence + _oov + _phones
     else:
         raise Exception("{} symbol set does not exist".format(symbol_set))
-
     return symbols
 
 
 def get_pad_idx(symbol_set='english_basic', symbol_type=None):
+    if symbol_type == 'pf':
+        return None  # no embedding table => no padding symbol (just zero vectors)
     try:
         return get_symbols(symbol_set, symbol_type).index('_')
     except ValueError:
