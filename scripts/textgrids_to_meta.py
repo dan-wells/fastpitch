@@ -3,49 +3,39 @@
 import argparse
 import glob
 import os
-import sys
 
-import numpy as np
 import tgt
 import tqdm
 
 
-# TODO: this is also defined in extract_mels.py, pull out to common utils?
-def parse_textgrid(tier, sampling_rate, hop_length):
-    # latest MFA replaces silence phones with "" in output TextGrids
-    sil_phones = ["sil", "sp", "spn", ""]
-    start_time = tier[0].start_time
-    end_time = tier[-1].end_time
-    phones = []
-    durations = []
-    for i, t in enumerate(tier._objects):
-        s, e, p = t.start_time, t.end_time, t.text
-        if p not in sil_phones:
-            phones.append(p)
-        else:
-            if (i == 0) or (i == len(tier) - 1):
-                # leading or trailing silence
-                phones.append("sil")
+def parse_textgrid_tier(tier, skip_sil=False):
+    # latest MFA replaces silence phones with '' in output TextGrids
+    sil_phones = ['sil', 'sp', 'spn', '']
+    symbols = []
+    for n, interval in enumerate(tier._objects):
+        sym = interval.text
+        if sym not in sil_phones:
+            symbols.append(sym)
+        elif not skip_sil:
+            if (n == 0) or (n == len(tier) - 1):
+                symbols.append('sil')  # leading or trailing silence
             else:
-                # short pause between words
-                phones.append("sp")
-        durations.append(int(np.ceil(e * sampling_rate / hop_length)
-                             - np.ceil(s * sampling_rate / hop_length)))
-    return phones, durations, start_time, end_time
+                symbols.append('sp')  # short pause between words
+    return symbols
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Extract transcripts from TextGrid files and write to '
-                    'wav file list for extract_mels.py.')
+                    'wav file list for prepare_dataset.py.')
     parser.add_argument('textgrid_dir', type=str,
         help='Directory containing TextGrids to process.')
     parser.add_argument('meta_out', type=str,
         help='Output metadata file to write.')
-    parser.add_argument('-sr', '--sampling_rate', type=int, default=22050,
-        help='Sampling rate of aligned audio files. Default 22050 Hz.')
-    parser.add_argument('--hop_length', type=int, default=256,
-        help='Hop length used when extracting mel spectrogram frames. Default 256.')
+    parser.add_argument('--tier', type=str, choices=['phones', 'words'], default='phones',
+        help='Tier to extract symbols from')
+    parser.add_argument('--skip-sil', action='store_true',
+        help='Exclude silence phones from output')
     args = parser.parse_args()
 
     with open(args.meta_out, 'w') as outf:
@@ -54,13 +44,10 @@ if __name__ == '__main__':
             try:
                 textgrid = tgt.io.read_textgrid(tgf, include_empty_intervals=True)
             except FileNotFoundError:
-                # presumably this file did not align successfully
-                continue
-            phones, durations, start, end = parse_textgrid(
-                textgrid.get_tier_by_name("phones"),
-                args.sampling_rate,
-                args.hop_length)
-            # almost certainly wrong given MFA filenames: fix it after
+                continue  # assume failed alignment
+            symbols = parse_textgrid_tier(
+                textgrid.get_tier_by_name(args.tier), args.skip_sil)
+            # note: TextGrids from MFA might not match original audio filenames
             wav_file = tgf.replace('TextGrid', 'wav')
-            outf.write('{}|{}\n'.format(wav_file, ' '.join(phones)))
-
+            wav_file = os.path.join('wavs', os.path.basename(wav_file))
+            outf.write('{}|{}\n'.format(wav_file, ' '.join(symbols)))
