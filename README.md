@@ -1,4 +1,4 @@
-# FastPitch 1.0 for PyTorch
+# FastPitch
 
 This repository is based on NVIDIA's reference implementation of FastPitch,
 extracted from their [DeepLearningExamples](https://github.com/NVIDIA/DeepLearningExamples) repository.
@@ -57,6 +57,7 @@ are possible values for `--input-type` and second-level for `--symbol-set`:
     * `english_basic`
     * `english_basic_lowercase`
     * `english_expanded`
+    * `english_basic_sil`
 - `phone` or `pf` (phonological feature vectors)
     * `arpabet`
     * `combilex`
@@ -79,6 +80,11 @@ Additional notes:
   in your chosen `--symbol-set`
     * Check `common/text/cleaners.py` and the `--text-cleaners` option for
       built-in text normalization options
+    * You might want to insert additional space characters at the beginning and
+      end of your text transcripts to represent any leading or trailing silence
+      in the audio (especially if using  monotonic alignment search for duration
+      targets). Pass `add_spaces=True` when setting up your `TextProcessing`
+      instance to do this automatically.
 - `phone`, `pf` and `unit` inputs should probably be individual symbols
   separated by spaces, e.g. an `xsampa` rendering of the phrase 'the cat'
   would have a transcript like `D @ k a t`
@@ -99,13 +105,12 @@ Additional notes:
   character-level alignments, where the pronunciation of each word is
   represented by the characters in that word separated by spaces (e.g. 'cat'
   &rarr; `c a t`), and also includes symbols for silence and short pauses
-  between words. This matches the handling of phone string inputs, so use
-  `--input-type phone` with this symbol set.
-    * **TODO:** This is really the only sensible way to synthesize from text
-      since we removed duration extraction from pre-trained character-input
-      Tacotron 2 models. `TextProcessing` should be updated to allow for more
-      intuitive text input while remaining consistent with durations extracted
-      from character-level TextGrid alignments.
+  between words. This symbol set can be used in two ways:
+    * With `char` inputs, pass `handle_sil=True` to your `TextProcessing`
+      instance to treat silence phones as single tokens while still splitting
+      other words into character sequences.
+    * With `phone` inputs, where your input texts should be preprocessed to
+      insert spaces between every character.
 
 ### Acoustic feature extraction
 
@@ -192,7 +197,7 @@ in your data, then you can narrow the corresponding hypothesis space for pYIN by
 adjusting `--pitch-f{min,max}` (defaults 50--600 Hz) to speed things up a bit.
 
 Framewise pitch values are averaged per input symbol to provide pitch targets
-during training. This is done during data pre-processing when extracting target
+during training. This is done during data preprocessing when extracting target
 durations from TextGrid alignments or by run-length encoding input symbol
 sequences, and the character-level pitch values are saved to disk in this case.
 When training with MAS, we save frame-level pitch values to disk and average

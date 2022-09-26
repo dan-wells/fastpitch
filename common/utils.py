@@ -53,7 +53,9 @@ def load_wav_to_torch(full_path, force_sampling_rate=None):
 
 def load_filepaths_and_text(dataset_path, fnames, has_speakers=False, split="|"):
     def split_line(root, line):
-        parts = line.strip().split(split)
+        # don't strip trailing space, in case we added it to transcript
+        # to represent trailing silence
+        parts = line.strip('\n').split(split)
         if has_speakers:
             paths, non_paths = parts[:-2], parts[-2:]
         else:

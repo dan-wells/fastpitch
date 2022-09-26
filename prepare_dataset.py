@@ -398,17 +398,17 @@ def main():
         if args.durations_from == 'textgrid':
             durations, text, start_time, end_time = extract_durs_from_textgrid(
                 fname, args.dataset_path, args.sampling_rate, args.hop_length, mel_len)
+            text = ' '.join(text)
         elif args.durations_from == 'unit_rle':
             durations, text = extract_durs_from_unit_sequence(
                 fname, args.dataset_path, text, mel_len)
+            text = ' '.join(text)
         elif args.durations_from == 'attn_prior':
             durations = extract_duration_prior(text_len, mel_len)
-            # TODO: make sure this works for all input types, only tested with phones
-            text = [str(dataset.tp.id_to_symbol[int(i)]) for i in text]
-            assert len(text) == durations.shape[1]
+            text = dataset.tp.ids_to_text(text.numpy())
         fpath = os.path.join(args.dataset_path, 'durations', fname + '.pt')
         torch.save(torch.LongTensor(durations), fpath)
-        # texts are modified here: silences from textgrids, run-length encoding of units
+        # texts have been modified here: silences from textgrids, run-length encoding of units
         fname_text[fname] = text
 
         pitches = extract_pitches(
@@ -442,7 +442,7 @@ def main():
             for fname in filenames:
                 meta_out.write(
                     'mels/{0}.pt|durations/{0}.pt|pitches/{0}.pt|{1}\n'.format(
-                        fname, ' '.join(fname_text[fname])))
+                        fname, fname_text[fname]))
     DLLogger.flush()
 
 
