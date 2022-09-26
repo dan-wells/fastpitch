@@ -83,8 +83,8 @@ Additional notes:
     * You might want to insert additional space characters at the beginning and
       end of your text transcripts to represent any leading or trailing silence
       in the audio (especially if using  monotonic alignment search for duration
-      targets). Pass `add_spaces=True` when setting up your `TextProcessing`
-      instance to do this automatically.
+      targets). Pass `add_spaces=True` when setting up your `TextProcessor` to
+      do this automatically.
 - `phone`, `pf` and `unit` inputs should probably be individual symbols
   separated by spaces, e.g. an `xsampa` rendering of the phrase 'the cat'
   would have a transcript like `D @ k a t`
@@ -106,9 +106,9 @@ Additional notes:
   represented by the characters in that word separated by spaces (e.g. 'cat'
   &rarr; `c a t`), and also includes symbols for silence and short pauses
   between words. This symbol set can be used in two ways:
-    * With `char` inputs, pass `handle_sil=True` to your `TextProcessing`
-      instance to treat silence phones as single tokens while still splitting
-      other words into character sequences.
+    * With `char` inputs, pass `handle_sil=True` to your `TextProcessor`
+      to treat silence phones as single tokens while still splitting other
+      words into character sequences.
     * With `phone` inputs, where your input texts should be preprocessed to
       insert spaces between every character.
 

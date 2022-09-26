@@ -20,7 +20,7 @@ _combilex_to_ipa = {
 }
 
 
-class PhoneProcessing(object):
+class PhoneProcessor(object):
     def __init__(self, symbol_set, symbol_type='phone'):
         self.symbol_set = symbol_set
         self.symbol_type = symbol_type
@@ -80,7 +80,7 @@ class PhoneProcessing(object):
         return text_encoded
 
 
-class UnitProcessing(object):
+class UnitProcessor(object):
     def __init__(self, symbol_set, symbol_type):
         self.symbols = get_symbols(symbol_set, symbol_type)
 
@@ -94,7 +94,7 @@ class UnitProcessing(object):
 
 # TODO: work out best defaults and neatest interface to set handle_sil
 # and add_spaces here
-class TextProcessing(object):
+class TextProcessor(object):
     def __init__(self, symbol_set, cleaner_names, add_spaces=False, handle_sil=False):
         self.symbols = get_symbols(symbol_set)
         self.cleaner_names = cleaner_names

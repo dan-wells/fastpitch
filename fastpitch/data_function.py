@@ -30,7 +30,7 @@ import torch
 
 import common.layers as layers
 from common.utils import load_filepaths_and_text, load_wav_to_torch, to_gpu
-from common.text.text_processing import TextProcessing, PhoneProcessing, UnitProcessing
+from common.text.text_processing import TextProcessor, PhoneProcessor, UnitProcessor
 
 
 class TextMelAliLoader(torch.utils.data.Dataset):
@@ -53,11 +53,11 @@ class TextMelAliLoader(torch.utils.data.Dataset):
         self.symbol_set = symbol_set
         self.text_cleaners = text_cleaners
         if self.input_type == 'char':
-            self.tp = TextProcessing(self.symbol_set, self.text_cleaners)
+            self.tp = TextProcessor(self.symbol_set, self.text_cleaners)
         elif self.input_type == 'unit':
-            self.tp = UnitProcessing(self.symbol_set, self.input_type)
+            self.tp = UnitProcessor(self.symbol_set, self.input_type)
         else:
-            self.tp = PhoneProcessing(self.symbol_set, self.input_type)
+            self.tp = PhoneProcessor(self.symbol_set, self.input_type)
         self.n_symbols = len(self.tp.symbols)
 
         self.load_mel_from_disk = load_mel_from_disk

@@ -46,7 +46,7 @@ from common import utils
 from common.tb_dllogger import (init_inference_metadata, stdout_metric_format,
                                 unique_log_fpath)
 from common.text.symbols import get_pad_idx
-from common.text.text_processing import TextProcessing, PhoneProcessing, UnitProcessing
+from common.text.text_processing import TextProcessor, PhoneProcessor, UnitProcessor
 from pitch_transform import pitch_transform_custom
 
 
@@ -191,11 +191,11 @@ def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners
                            load_pitch=False, load_duration=False,
                            load_speaker=False):
     if input_type == 'char':
-        tp = TextProcessing(symbol_set, text_cleaners)
+        tp = TextProcessor(symbol_set, text_cleaners)
     elif input_type == 'unit':
-        tp = UnitProcessing(symbol_set, input_type)
+        tp = UnitProcessor(symbol_set, input_type)
     else:
-        tp = PhoneProcessing(symbol_set, input_type)
+        tp = PhoneProcessor(symbol_set, input_type)
 
     if input_type == 'pf':
         fields['text'] = [torch.FloatTensor(tp.encode_text(text))
