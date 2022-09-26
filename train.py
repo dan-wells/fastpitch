@@ -612,7 +612,7 @@ def train(rank, args):
             x, y, num_frames = batch_to_gpu(batch, args.input_type, args.use_mas)
 
             with autocast(enabled=args.amp):
-                y_pred = model(x, use_gt_durations=(not args.use_mas))
+                y_pred = model(x, use_gt_durations=True)
                 loss, meta = criterion(y_pred, y)
                 
                 if args.use_mas:
