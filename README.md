@@ -3,6 +3,16 @@
 This repository is based on NVIDIA's reference implementation of FastPitch,
 extracted from their [DeepLearningExamples](https://github.com/NVIDIA/DeepLearningExamples) repository.
 
+- [Data preparation](#data-preparation)
+    * [Supported input representations](#supported-input-representations)
+    * [Acoustic feature extraction](#acoustic-feature-extraction)
+    * [Duration targets](#duration-targets)
+    * [Pitch estimation](#pitch-estimation)
+- [Model training](#model-training)
+- [Synthesizing speech](#synthesizing-speech)
+    * [Copy synthesis](#copy-synthesis)
+    * [Audio transforms](#audio-transforms)
+
 ## Data preparation
 
 FastPitch learns to predict mel-scale spectrograms from input symbol sequences
