@@ -27,8 +27,8 @@
 
 import argparse
 import copy
-import json
 import glob
+import json
 import os
 import re
 import time
@@ -55,9 +55,7 @@ from fastpitch.loss_function import FastPitchLoss, FastPitchMASLoss
 
 
 def parse_args(parser):
-    """
-    Parse commandline arguments.
-    """
+    """Parse commandline arguments"""
     parser.add_argument('-o', '--output', type=str, required=True,
                         help='Directory to save checkpoints')
     parser.add_argument('-d', '--dataset-path', type=str, default='./',
@@ -65,92 +63,93 @@ def parse_args(parser):
     parser.add_argument('--log-file', type=str, default=None,
                         help='Path to a DLLogger log file')
 
-    training = parser.add_argument_group('training setup')
-    training.add_argument('--epochs', type=int, required=True,
-                          help='Number of total epochs to run')
-    training.add_argument('--epochs-per-checkpoint', type=int, default=50,
-                          help='Number of epochs per checkpoint')
-    training.add_argument('--checkpoint-path', type=str, default=None,
-                          help='Checkpoint path to resume training')
-    training.add_argument('--resume', action='store_true',
-                          help='Resume training from the last available checkpoint')
-    training.add_argument('--seed', type=int, default=1234,
-                          help='Seed for PyTorch random number generators')
-    training.add_argument('--amp', action='store_true',
-                          help='Enable AMP')
-    training.add_argument('--cuda', action='store_true',
-                          help='Run on GPU using CUDA')
-    training.add_argument('--cudnn-benchmark', action='store_true',
-                          help='Enable cudnn benchmark mode')
-    training.add_argument('--ema-decay', type=float, default=0,
-                          help='Discounting factor for training weights EMA')
-    training.add_argument('--gradient-accumulation-steps', type=int, default=1,
-                          help='Training steps to accumulate gradients for')
+    train = parser.add_argument_group('training setup')
+    train.add_argument('--epochs', type=int, required=True,
+                       help='Number of total epochs to run')
+    train.add_argument('--epochs-per-checkpoint', type=int, default=50,
+                       help='Number of epochs per checkpoint')
+    train.add_argument('--checkpoint-path', type=str, default=None,
+                       help='Checkpoint path to resume train')
+    train.add_argument('--resume', action='store_true',
+                       help='Resume train from the last available checkpoint')
+    train.add_argument('--seed', type=int, default=1234,
+                       help='Seed for PyTorch random number generators')
+    train.add_argument('--amp', action='store_true',
+                       help='Enable AMP')
+    train.add_argument('--cuda', action='store_true',
+                       help='Run on GPU using CUDA')
+    train.add_argument('--cudnn-benchmark', action='store_true',
+                       help='Enable cudnn benchmark mode')
+    train.add_argument('--ema-decay', type=float, default=0,
+                       help='Discounting factor for train weights EMA')
+    train.add_argument('--grad-accumulation', type=int, default=1,
+                       help='Training steps to accumulate gradients for')
 
-    optimization = parser.add_argument_group('optimization setup')
-    optimization.add_argument('--optimizer', type=str, default='lamb',
-                              choices=['adam', 'lamb'], help='Optimization algorithm')
-    optimization.add_argument('-lr', '--learning-rate', default=0.1, type=float,
-                              help='Learning rate')
-    optimization.add_argument('--weight-decay', default=1e-6, type=float,
-                              help='Weight decay')
-    optimization.add_argument('--grad-clip-thresh', default=1000.0, type=float,
-                              help='Clip threshold for gradients')
-    optimization.add_argument('-bs', '--batch-size', type=int, required=True,
-                              help='Batch size per GPU')
-    optimization.add_argument('--warmup-steps', type=int, default=1000,
-                              help='Number of steps for lr warmup')
-    optimization.add_argument('--dur-predictor-loss-scale', type=float,
-                              default=0.1, help='Rescale duration predictor loss')
-    optimization.add_argument('--pitch-predictor-loss-scale', type=float,
-                              default=0.1, help='Rescale pitch predictor loss')
-    optimization.add_argument('--attn-loss-scale', type=float,
-                              default=1.0, help='Rescale alignment loss')
-    optimization.add_argument('--kl-loss-weight', type=float,
-                              default=1.0, help='Rescale hard attention loss')
-    optimization.add_argument('--kl-loss-start-epoch', type=int, default=0,
-                              help='Start adding the hard attention loss term')
-    optimization.add_argument('--kl-loss-warmup-epochs', type=int, default=100,
-                              help='Gradually increase the hard attention loss term')
+    opt = parser.add_argument_group('optimization setup')
+    opt.add_argument('--optimizer', type=str, default='lamb', choices=['adam', 'lamb'],
+                     help='Optimization algorithm')
+    opt.add_argument('-lr', '--learning-rate', default=0.1, type=float,
+                     help='Learning rate')
+    opt.add_argument('--weight-decay', default=1e-6, type=float,
+                     help='Weight decay')
+    opt.add_argument('--grad-clip-thresh', default=1000.0, type=float,
+                     help='Clip threshold for gradients')
+    opt.add_argument('-bs', '--batch-size', type=int, required=True,
+                     help='Batch size per GPU')
+    opt.add_argument('--warmup-steps', type=int, default=1000,
+                     help='Number of steps for lr warmup')
+    opt.add_argument('--dur-predictor-loss-scale', type=float, default=0.1,
+                     help='Rescale duration predictor loss')
+    opt.add_argument('--pitch-predictor-loss-scale', type=float, default=0.1,
+                     help='Rescale pitch predictor loss')
+    opt.add_argument('--attn-loss-scale', type=float, default=1.0,
+                     help='Rescale alignment loss')
+    opt.add_argument('--kl-loss-weight', type=float, default=1.0,
+                     help='Rescale hard attention loss')
+    opt.add_argument('--kl-loss-start-epoch', type=int, default=0,
+                     help='Start adding the hard attention loss term')
+    opt.add_argument('--kl-loss-warmup-epochs', type=int, default=100,
+                     help='Gradually increase the hard attention loss term')
 
-    dataset = parser.add_argument_group('dataset parameters')
-    dataset.add_argument('--training-files', type=str, nargs='*', required=True,
+    data = parser.add_argument_group('dataset parameters')
+    data.add_argument('--training-files', type=str, nargs='*', required=True,
                       help='Paths to training filelists.')
-    dataset.add_argument('--validation-files', type=str, nargs='*',
-                      required=True, help='Paths to validation filelists')
-    dataset.add_argument('--pitch-mean-std-file', type=str, default=None,
-                         help='Path to pitch stats to be stored in the model')
-    dataset.add_argument('--input-type', type=str, default='char',
-                         choices=['char', 'phone', 'pf', 'unit'],
-                         help='Input symbols used, either char (text), phone, '
-                         'pf (phonological feature vectors) or unit (quantized '
-                         'acoustic representation IDs)')
-    dataset.add_argument('--symbol-set', type=str, default='english_basic',
-                         help='Define symbol set for input sequences. For '
-                         'quantized unit inputs, pass the size of the vocabulary.')
-    dataset.add_argument('--text-cleaners', nargs='*', default=[], type=str,
-                         help='Type of text cleaners for input text.')
+    data.add_argument('--validation-files', type=str, nargs='*', required=True,
+                      help='Paths to validation filelists')
+    data.add_argument('--pitch-mean-std-file', type=str, default=None,
+                      help='Path to pitch stats to be stored in the model')
+    data.add_argument('--input-type', type=str, default='char',
+                      choices=['char', 'phone', 'pf', 'unit'],
+                      help='Input symbols used, either char (text), phone, pf '
+                      '(phonological feature vectors) or unit (quantized acoustic '
+                      'representation IDs)')
+    data.add_argument('--symbol-set', type=str, default='english_basic',
+                      help='Define symbol set for input sequences. For quantized '
+                      'unit inputs, pass the size of the vocabulary.')
+    data.add_argument('--text-cleaners', type=str, nargs='*', default=[],
+                      help='Type of text cleaners for input text.')
 
     cond = parser.add_argument_group('conditioning on additional attributes')
     cond.add_argument('--n-speakers', type=int, default=1,
-                      help='Condition on speaker, value > 1 enables trainable speaker embeddings.')
+                      help='Condition on speaker, value > 1 enables trainable '
+                      'speaker embeddings.')
 
-    vocoder = parser.add_argument_group('log generated audio during training')
-    vocoder.add_argument('--hifigan-checkpoint', type=str, default='',
-                         help='Path to HiFi-GAN vocoder checkpoint')
-    vocoder.add_argument('--hifigan-config', type=str, default='hifigan/config/config_v1.json',
-                         help='Path to HiFi-GAN vocoder config file')
-    vocoder.add_argument('--sampling-rate', type=int, default=22050,
-                         help='Sampling rate for output audio')
-    vocoder.add_argument('--hop-length', type=int, default=256,
-                         help='STFT hop length for estimating audio length from mel size')
-    vocoder.add_argument('--audio-interval', type=int, default=5,
-                         help='Log generated audio and spectrograms every N epochs')
+    audio = parser.add_argument_group('log generated audio')
+    audio.add_argument('--hifigan', type=str, default='',
+                       help='Path to HiFi-GAN audio checkpoint')
+    audio.add_argument('--hifigan-config', type=str, default='hifigan/config/config_v1.json',
+                       help='Path to HiFi-GAN audio config file')
+    audio.add_argument('--sampling-rate', type=int, default=22050,
+                       help='Sampling rate for output audio')
+    audio.add_argument('--hop-length', type=int, default=256,
+                       help='STFT hop length for estimating audio length from mel size')
+    audio.add_argument('--audio-interval', type=int, default=5,
+                       help='Log generated audio and spectrograms every N epochs')
 
-    distributed = parser.add_argument_group('distributed setup')
-    distributed.add_argument('--master-addr', type=str, default='localhost',
+    dist = parser.add_argument_group('distributed training setup')
+    dist.add_argument('--master-addr', type=str, default='localhost',
                              help='IP address of machine hosting master process.')
-    distributed.add_argument('--master-port', type=int, default=13370,
+    dist.add_argument('--master-port', type=int, default=13370,
                              help='Free port on machine hosting master process.')
     return parser
 
@@ -174,6 +173,9 @@ def init_distributed(rank, args):
 
 
 def last_checkpoint(output):
+    saved = sorted(
+        glob.glob(f'{output}/FastPitch_checkpoint_*.pt'),
+        key=lambda f: int(re.search('_(\d+).pt', f).group(1)))
 
     def corrupted(fpath):
         try:
@@ -182,10 +184,6 @@ def last_checkpoint(output):
         except:
             warnings.warn(f'Cannot load {fpath}')
             return True
-
-    saved = sorted(
-        glob.glob(f'{output}/FastPitch_checkpoint_*.pt'),
-        key=lambda f: int(re.search('_(\d+).pt', f).group(1)))
 
     if len(saved) >= 1 and not corrupted(saved[-1]):
         return saved[-1]
@@ -242,7 +240,7 @@ def load_checkpoint(args, model, ema_model, optimizer, scaler, epoch,
 
 def load_vocoder(args, device):
     """Load HiFi-GAN vocoder from checkpoint"""
-    checkpoint_data = torch.load(args.hifigan_checkpoint)
+    checkpoint_data = torch.load(args.hifigan)
     vocoder_config = models.get_model_config('HiFi-GAN', args)
     vocoder = models.get_model('HiFi-GAN', vocoder_config, device)
     vocoder.load_state_dict(checkpoint_data['generator'])
@@ -557,7 +555,7 @@ def train(rank, args):
                               collate_fn=collate_fn)
 
     vocoder = None
-    if args.hifigan_checkpoint:
+    if args.hifigan:
         vocoder = load_vocoder(args, device)
 
     # log spectrograms and generated audio for first few validation utterances
@@ -611,7 +609,7 @@ def train(rank, args):
         iter_meta = {}
 
         epoch_iter = 0
-        num_iters = len(train_loader) // args.gradient_accumulation_steps
+        num_iters = len(train_loader) // args.grad_accumulation
         for batch in train_loader:
 
             if accumulated_steps == 0:
@@ -648,9 +646,9 @@ def train(rank, args):
                         binarization_loss = 0
                     meta['align_loss'] = meta['attn_loss'] + meta['kl_loss']
 
-                loss /= args.gradient_accumulation_steps
+                loss /= args.grad_accumulation
 
-            meta = {k: v / args.gradient_accumulation_steps
+            meta = {k: v / args.grad_accumulation
                     for k, v in meta.items()}
 
             if args.amp:
@@ -673,7 +671,7 @@ def train(rank, args):
             iter_num_frames += reduced_num_frames
             iter_meta = {k: iter_meta.get(k, 0) + meta.get(k, 0) for k in meta}
 
-            if accumulated_steps % args.gradient_accumulation_steps == 0:
+            if accumulated_steps % args.grad_accumulation == 0:
                 if args.amp:
                     scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(
