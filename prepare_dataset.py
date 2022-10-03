@@ -65,7 +65,7 @@ def parse_args(parser):
     parser.add_argument('--symbol-set', type=str, default='english_basic',
                         help='Define symbol set for input text')
     parser.add_argument('--text-cleaners', nargs='*',
-                        default=['english_cleaners'], type=str,
+                        default=[], type=str,
                         help='Type of text cleaners for input text')
     parser.add_argument('--max-wav-value', default=32768.0, type=float,
                         help='Maximum audiowave value')
