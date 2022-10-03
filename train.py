@@ -312,32 +312,49 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
 
     val_meta['took'] = time.perf_counter() - tik
 
-    logger_data = [
-        ('Loss/Total', val_meta['loss'].item()),
-        ('Loss/Mel', val_meta['mel_loss'].item()),
-        ('Loss/Duration', val_meta['duration_predictor_loss'].item()),
-        ('Loss/Pitch', val_meta['pitch_loss'].item()),
-        #('Error/Duration', val_meta['duration_error'].item()),
-        #('Error/Pitch', val_meta['pitch_error'].item()),
-        #('Time/FPS', num_frames.item() / val_meta['took']),
-    ]
-    if mas:
-        logger_data.extend([
-            ('Loss/Alignment', val_meta['align_loss'].item()),
-            #('Align/Attention loss', iter_attn_loss),
-            #('Align/KL loss', iter_kl_loss),
-            #('Align/KL weight', iter_kl_weight),
-        ])
-    logger_data.append(('Time/Iter time', val_meta['took']))
-    logger.log((epoch,) if epoch is not None else (),
-               tb_total_steps=total_iter,
-               subset='val_ema' if ema else 'val',
-               data=OrderedDict(logger_data)
+    log_stdout(logger,
+               'val_ema' if ema else 'val',
+               (epoch,) if epoch is not None else (),
+               total_iter,
+               val_meta['loss'].item(),
+               val_meta['mel_loss'].item(),
+               val_meta['duration_predictor_loss'].item(),
+               val_meta['pitch_loss'].item(),
+               None if not mas else val_meta['align_loss'].item(),
+               val_meta['took']
     )
 
     if was_training:
         model.train()
     return val_meta
+
+
+def log_stdout(logger, subset, epoch_iters, total_steps, loss, mel_loss,
+               dur_loss, pitch_loss, align_loss, took):
+    logger_data = [
+        ('Loss/Total', loss),
+        ('Loss/Mel', mel_loss),
+        ('Loss/Duration', dur_loss),
+        ('Loss/Pitch', pitch_loss),
+        #('Error/Duration', iter_dur_error),
+        #('Error/Pitch', iter_pitch_error),
+        #('Time/FPS', iter_num_frames / iter_time),
+        # only relevant per step, not averaged over epoch
+        #('Hyperparameters/Learning rate', optimizer.param_groups[0]['lr']),
+    ]
+    if align_loss is not None:
+        logger_data.extend([
+            ('Loss/Alignment', align_loss),
+            #('Align/Attention loss', iter_attn_loss),
+            #('Align/KL loss', iter_kl_loss),
+            #('Align/KL weight', iter_kl_weight),  # step, not avg
+        ])
+    logger_data.append(('Time/Iter time', took))
+    logger.log(epoch_iters,
+               tb_total_steps=total_steps,
+               subset=subset,
+               data=OrderedDict(logger_data)
+    )
 
 
 def plot_spectrograms(y, fnames, step, n=4, label='Predicted spectrogram', mas=False):
@@ -695,29 +712,16 @@ def train(rank, args):
                     epoch_attn_loss += iter_attn_loss
                     epoch_kl_loss += iter_kl_loss
 
-                # TODO: factor out logging
-                logger_data = [
-                    ('Loss/Total', iter_loss),
-                    ('Loss/Mel', iter_mel_loss),
-                    ('Loss/Duration', iter_dur_loss),
-                    ('Loss/Pitch', iter_pitch_loss),
-                    #('Error/Duration', iter_dur_error),
-                    #('Error/Pitch', iter_pitch_error),
-                    #('Time/FPS', iter_num_frames / iter_time),
-                    #('Hyperparameters/Learning rate', optimizer.param_groups[0]['lr']),
-                ]
-                if args.use_mas:
-                    logger_data.extend([
-                        ('Loss/Alignment', iter_align_loss),
-                        #('Align/Attention loss', iter_attn_loss),
-                        #('Align/KL loss', iter_kl_loss),
-                        #('Align/KL weight', iter_kl_weight),
-                    ])
-                logger_data.append(('Time/Iter time', iter_time))
-                logger.log((epoch, epoch_iter, num_iters),
-                           tb_total_steps=total_iter,
-                           subset='train',
-                           data=OrderedDict(logger_data)
+                log_stdout(logger,
+                           'train',
+                           (epoch, epoch_iter, num_iters),
+                           total_iter,
+                           iter_loss,
+                           iter_mel_loss,
+                           iter_dur_loss,
+                           iter_pitch_loss,
+                           None if not args.use_mas else iter_align_loss,
+                           iter_time
                 )
 
                 accumulated_steps = 0
@@ -728,26 +732,16 @@ def train(rank, args):
         # Finished epoch
         epoch_time = time.perf_counter() - epoch_start_time
 
-        logger_data = [
-            ('Loss/Total', epoch_loss / epoch_iter),
-            ('Loss/Mel', epoch_mel_loss / epoch_iter),
-            ('Loss/Duration', epoch_dur_loss / epoch_iter),
-            ('Loss/Pitch', epoch_pitch_loss / epoch_iter),
-            #('Error/Duration', epoch_dur_error / epoch_iter),
-            #('Error/Pitch', epoch_pitch_error / epoch_iter),
-            #('Time/FPS', epoch_num_frames / epoch_time),
-        ]
-        if args.use_mas:
-            logger_data.extend([
-                ('Loss/Alignment', epoch_align_loss / epoch_iter),
-                #('Align/Attention loss', epoch_attn_loss / epoch_iter),
-                #('Align/KL loss', epoch_kl_loss / epoch_iter),
-            ])
-        logger_data.append(('Time/Iter time', epoch_time))
-        logger.log((epoch,),
-                   tb_total_steps=None,
-                   subset='train_avg',
-                   data=OrderedDict(logger_data)
+        log_stdout(logger,
+                   'train_avg',
+                   (epoch,),
+                   None,
+                   epoch_loss / epoch_iter,
+                   epoch_mel_loss / epoch_iter,
+                   epoch_dur_loss / epoch_iter,
+                   epoch_pitch_loss / epoch_iter,
+                   None if not args.use_mas else epoch_align_loss / epoch_iter,
+                   epoch_time
         )
 
         validate(model, epoch, total_iter, criterion, valset, args.batch_size,
@@ -768,26 +762,16 @@ def train(rank, args):
         logger.flush()
 
     # Finished training
-    logger_data = [
-        ('Loss/Total', epoch_loss / epoch_iter),
-        ('Loss/Mel', epoch_mel_loss / epoch_iter),
-        ('Loss/Duration', epoch_dur_loss / epoch_iter),
-        ('Loss/Pitch', epoch_pitch_loss / epoch_iter),
-        #('Error/Duration', epoch_dur_error / epoch_iter),
-        #('Error/Pitch', epoch_pitch_error / epoch_iter),
-        #('Time/FPS', epoch_num_frames / epoch_time),
-    ]
-    if args.use_mas:
-        logger_data.extend([
-            ('Loss/Alignment', epoch_align_loss / epoch_iter),
-            #('Align/Attention loss', epoch_attn_loss / epoch_iter),
-            #('Align/KL loss', epoch_kl_loss / epoch_iter),
-        ])
-    logger_data.append(('Time/Iter time', epoch_time))
-    logger.log((),
-               tb_total_steps=None,
-               subset='train_avg',
-               data=OrderedDict(logger_data)
+    log_stdout(logger,
+               'train_avg',
+               (),
+               None,
+               epoch_loss / epoch_iter,
+               epoch_mel_loss / epoch_iter,
+               epoch_dur_loss / epoch_iter,
+               epoch_pitch_loss / epoch_iter,
+               None if not args.use_mas else epoch_align_loss / epoch_iter,
+               epoch_time
     )
     validate(model, None, total_iter, criterion, valset, args.batch_size,
              collate_fn, args.distributed_run, batch_to_gpu, use_gt_durations=True,
