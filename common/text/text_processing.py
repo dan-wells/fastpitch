@@ -92,13 +92,15 @@ class UnitProcessor(object):
         return [int(i) for i in text.split(' ')]
 
 
-# TODO: work out best defaults and neatest interface to set handle_sil
-# and add_spaces here
+# TODO: work out best defaults and neatest interface to set handle_sil,
+# add_spaces and skip_spaces here
 class TextProcessor(object):
-    def __init__(self, symbol_set, cleaner_names, add_spaces=False, handle_sil=False):
+    def __init__(self, symbol_set, cleaner_names, handle_sil=False,
+                 add_spaces=False, skip_spaces=False):
         self.symbols = get_symbols(symbol_set)
         self.cleaner_names = cleaner_names
         self.add_spaces = add_spaces
+        self.skip_spaces = skip_spaces
         self.handle_sil = handle_sil
         self.sil_symbols = ['sil', 'sp', 'spn']
 
@@ -119,7 +121,7 @@ class TextProcessor(object):
         for s1, s2 in zip(symbols, symbols[1:]):
             text.append(s1)
             if s1 in self.sil_symbols or s2 in self.sil_symbols:
-                text.append(' ')
+                text.append(' ')  # just for pretty printing
         text.append(s2)
         return ''.join(text)
 
@@ -149,6 +151,7 @@ class TextProcessor(object):
 
     def encode_text(self, text):
         text = self.clean_text(text)
+        text = cleaners.collapse_whitespace(text)
         # handle silence phones from forced alignments as single tokens,
         # while splitting other words into character sequences
         # TODO: check if this actually lines up with forced alignment
@@ -159,6 +162,8 @@ class TextProcessor(object):
         # represent silences if not referencing forced alignments
         if self.add_spaces:
             text = ' ' + text + ' '
-        text = cleaners.collapse_whitespace(text)  # in case we add extra
+        # match character-level TextGrids which don't align spaces
+        if self.skip_spaces:
+            text = [i for i in text if i != ' ']
         text_encoded = self.text_to_ids(text)
         return text_encoded
