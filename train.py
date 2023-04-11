@@ -304,7 +304,7 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
                     generate_audio(y_pred, tb_fnames, total_iter, vocoder, sampling_rate,
                                    hop_length, n=4, label='Predicted audio', mas=mas)
                 if mas:
-                    plot_attn_maps(y_pred, tb_fnames, total_iter, n=4, label='Predicted attention')
+                    plot_attn_maps(y_pred, tb_fnames, total_iter, n=4, label='Predicted alignment')
 
         val_meta = {k: v / len(valset) for k, v in val_meta.items()}
 
@@ -416,7 +416,7 @@ def generate_audio(y, fnames, step, vocoder=None, sampling_rate=22050, hop_lengt
             step, '{}/{}'.format(label, utt_id), audio, sampling_rate, tb_subset='val')
 
 
-def plot_attn_maps(y, fnames, step, n=4, label='Predicted attention'):
+def plot_attn_maps(y, fnames, step, n=4, label='Predicted alignment'):
     bs = len(fnames)
     n = min(n, bs)
     s = bs // n

@@ -58,6 +58,8 @@ def parse_args(parser):
                         help='Full path to the input text (phrases separated by newlines)')
     parser.add_argument('-o', '--output', default=None,
                         help='Output folder to save audio (file per phrase)')
+    parser.add_argument('-d', '--dataset-path', type=str, default='',
+                        help='Path to dataset (for loading extra data fields)')
     parser.add_argument('--log-file', type=str, default=None,
                         help='Path to a DLLogger log file')
     parser.add_argument('--cuda', action='store_true',
@@ -85,8 +87,6 @@ def parse_args(parser):
                         help='Repeat inference for benchmarking')
     parser.add_argument('--ema', action='store_true',
                         help='Use EMA averaged model (if saved in checkpoints)')
-    parser.add_argument('--dataset-path', type=str, default='',
-                        help='Path to dataset (for loading extra data fields)')
     parser.add_argument('--speaker', type=int, default=0,
                         help='Speaker ID for a multi-speaker model')
 
@@ -188,8 +188,7 @@ def load_fields(fpath):
 
 def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners,
                            batch_size=128, dataset=None, load_mels=False,
-                           load_pitch=False, load_duration=False,
-                           load_speaker=False):
+                           load_pitch=False, load_duration=False, load_speaker=False):
     if input_type == 'char':
         tp = TextProcessor(symbol_set, text_cleaners)
     elif input_type == 'unit':

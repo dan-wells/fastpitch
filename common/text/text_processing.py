@@ -93,7 +93,7 @@ class UnitProcessor(object):
 
 
 # TODO: work out best defaults and neatest interface to set handle_sil,
-# add_spaces and skip_spaces here
+# add_spaces and skip_spaces here (should they just go through cleaner_names?)
 class TextProcessor(object):
     def __init__(self, symbol_set, cleaner_names, handle_sil=False,
                  add_spaces=False, skip_spaces=False):

@@ -325,7 +325,7 @@ predicted by a FastPitch model. In that case, you should pass reference
 durations and pitch contours during synthesis to limit variation from reference
 audio. Use `--save-mels` to save predicted mel spectrograms to disk, either to
 filepaths specified in the `{mel_,}output` field of `test_meta.tsv`, else to
-sequential files like `$OUTPUT_DIR/mel_1.wav` if not specified.
+sequential files like `$OUTPUT_DIR/mel_1.pt` if not specified.
 
 ### Audio transforms
 

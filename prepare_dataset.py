@@ -108,7 +108,6 @@ def parse_args(parser):
 
 class FilenamesLoader(TextMelAliLoader):
     def __init__(self, filenames, **kwargs):
-        # dict_args = vars(args)
         self.filenames = filenames
         kwargs['audiopaths_and_text'] = [kwargs['wav_text_filelist']]
         kwargs['load_mel_from_disk'] = False
