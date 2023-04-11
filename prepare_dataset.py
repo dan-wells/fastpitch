@@ -92,9 +92,9 @@ def parse_args(parser):
     parser.add_argument('--pitch-method', default='yin', choices=['yin', 'pyin'],
                         help='Method to use for pitch extraction. Probabilistic YIN '
                         '(pyin) is more accurate but also much slower.')
-    parser.add_argument('--pitch-mean', default=None,
+    parser.add_argument('--pitch-mean', default=None, type=float,
                         help='Mean value to normalize extracted pitch')
-    parser.add_argument('--pitch-std', default=None,
+    parser.add_argument('--pitch-std', default=None, type=float,
                         help='Standard deviation to normalize extracted pitch')
     parser.add_argument('--durations-from', type=str, default='',
                         choices=['textgrid', 'unit_rle', 'attn_prior'],
