@@ -47,6 +47,7 @@ from common.tb_dllogger import (init_inference_metadata, stdout_metric_format,
                                 unique_log_fpath)
 from common.text.symbols import get_pad_idx
 from common.text.text_processing import TextProcessor, PhoneProcessor, UnitProcessor
+from hifigan.denoiser import Denoiser
 from pitch_transform import pitch_transform_custom
 
 
@@ -76,6 +77,8 @@ def parse_args(parser):
                         help='Sampling rate')
     parser.add_argument('--stft-hop-length', type=int, default=256,
                         help='STFT hop length for estimating audio length from mel size')
+    parser.add_argument('--denoising-strength', default=0.0, type=float,
+                        help='Capture and subtract HiFi-GAN model bias to enhance audio')
     parser.add_argument('--save-mels', action='store_true',
                         help='Save generated mel spectrograms from FastPitch')
     parser.add_argument('--amp', action='store_true',
@@ -337,12 +340,14 @@ def main():
 
     device = torch.device('cuda' if args.cuda else 'cpu')
 
+    generator = None
+    vocoder = None
+    denoiser = None
+
     if args.fastpitch:
         generator = load_and_setup_model(
             'FastPitch', parser, args.fastpitch, args.amp, device,
             unk_args=unk_args, forward_is_infer=True, ema=args.ema)
-    else:
-        generator = None
 
     if args.hifigan:
         with warnings.catch_warnings():
@@ -350,8 +355,9 @@ def main():
             vocoder = load_and_setup_model(
                 'HiFi-GAN', parser, args.hifigan, args.amp, device,
                 unk_args=unk_args, forward_is_infer=True, ema=args.ema)
-    else:
-        vocoder = None
+        if args.denoising_strength > 0.0:
+            denoiser = Denoiser(
+                vocoder, sr=args.sampling_rate, hop_length=args.stft_hop_length).to(device)
 
     if len(unk_args) > 0:
         raise ValueError(f'Invalid options {unk_args}')
@@ -419,6 +425,8 @@ def main():
             if vocoder is not None:
                 with torch.no_grad(), vocoder_measures:
                     audios = vocoder(mel)
+                    if denoiser is not None:
+                        audios = denoiser(audios.squeeze(1), args.denoising_strength)
                     audios = audios.squeeze(1)
 
                 all_samples += sum(audio.size(0) for audio in audios)
