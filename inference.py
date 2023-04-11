@@ -118,8 +118,7 @@ def parse_args(parser):
     text_processing.add_argument('--symbol-set', type=str, default='english_basic',
                                  help='Define symbol set for input sequences. For '
                                  'quantized unit inputs, pass the size of the vocabulary.')
-    text_processing.add_argument('--text-cleaners', nargs='*',
-                                 default=['english_cleaners'], type=str,
+    text_processing.add_argument('--text-cleaners', nargs='*', default=[], type=str,
                                  help='Type of text cleaners for input text.')
 
     cond = parser.add_argument_group('conditioning on additional attributes')
