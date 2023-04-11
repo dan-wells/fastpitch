@@ -245,7 +245,24 @@ def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners
             elif f == 'pitch' and load_pitch:
                 batch[f] = pad_sequence(batch[f], batch_first=True)
             elif f == 'duration' and load_duration:
-                batch[f] = pad_sequence(batch[f], batch_first=True)
+                if 'mel' in batch:
+                    # we're in mas mode: use gt mel and text lens to drive
+                    # masked attention and ensure final durations are right
+                    # (individual segment durations are still predicted --
+                    # we hope they line up enough for vocoder fine-tuning
+                    # to make sense)
+                    attn_prior_dims = [i.shape for i in batch[f]]
+                    mel_lens = [i[0] for i in attn_prior_dims]
+                    text_lens = [i[1] for i in attn_prior_dims]
+                    dur_padded = torch.zeros(
+                        len(mel_lens), max(mel_lens), max(text_lens)).to(device)
+                    for i, attn_prior in enumerate(batch[f]):
+                        dur_padded[i, :attn_prior.size(0), :attn_prior.size(1)] = attn_prior
+                    mel_lens = torch.as_tensor(mel_lens, dtype=torch.int).to(device)
+                    text_lens = torch.as_tensor(text_lens, dtype=torch.int).to(device)
+                    batch[f] = (dur_padded, batch['mel'].to(device), mel_lens, text_lens)
+                else:
+                    batch[f] = pad_sequence(batch[f], batch_first=True)
 
             if type(batch[f]) is torch.Tensor:
                 batch[f] = batch[f].to(device)
@@ -342,7 +359,7 @@ def main():
     fields = load_fields(args.input)
     batches = prepare_input_sequence(
         fields, device, args.input_type, args.symbol_set, args.text_cleaners,
-        args.batch_size, args.dataset_path, load_mels=(generator is None),
+        args.batch_size, args.dataset_path, load_mels=(generator is None or 'mel' in fields),
         load_pitch=('pitch' in fields), load_duration=('duration' in fields),
         load_speaker=('speaker' in fields))
 

@@ -190,6 +190,7 @@ class FastPitch(nn.Module):
         self.proj = nn.Linear(out_fft_output_size, n_mel_channels, bias=True)
 
         # For monotonic alignment search (see forward_mas)
+        self.use_mas = use_mas
         if use_mas:
             self.attention = ConvAttention(
                 n_mel_channels, 0, symbols_embedding_dim,
@@ -277,7 +278,6 @@ class FastPitch(nn.Module):
 
         # Predict pitch
         pitch_pred = self.pitch_predictor(enc_out, enc_mask)
-        #print(pitch_pred, pitch_pred.shape)
 
         # Alignment
         text_emb = self.encoder.word_emb(inputs)
@@ -333,6 +333,20 @@ class FastPitch(nn.Module):
         log_dur_pred = self.duration_predictor(enc_out, enc_mask)
         dur_pred = torch.clamp(torch.exp(log_dur_pred) - 1, 0, max_duration)
 
+        if dur_tgt is not None and self.use_mas:
+            # assume we don't have actual target durations (otherwise why
+            # use mas?), so generate them here
+            attn_prior, mel_tgt, mel_lens, input_lens = dur_tgt
+            text_emb = self.encoder.word_emb(inputs)
+            attn_mask = mask_from_lens(input_lens, max_len=inputs.size(1))
+            attn_mask = attn_mask[..., None] == 0
+            attn_soft, attn_logprob = self.attention(
+                mel_tgt, text_emb.permute(0, 2, 1), mel_lens, attn_mask,
+                key_lens=input_lens, keys_encoded=enc_out, attn_prior=attn_prior)
+            attn_hard = self.binarize_attention(attn_soft, input_lens, mel_lens)
+            attn_hard_dur = attn_hard.sum(2)[:, 0, :]
+            dur_tgt = attn_hard_dur
+
         # Pitch over chars
         pitch_pred = self.pitch_predictor(enc_out, enc_mask)
 
@@ -347,6 +361,8 @@ class FastPitch(nn.Module):
         if pitch_tgt is None:
             pitch_emb = self.pitch_emb(pitch_pred.unsqueeze(1)).transpose(1, 2)
         else:
+            if self.use_mas:
+                pitch_tgt = average_pitch(pitch_tgt, dur_tgt)
             pitch_emb = self.pitch_emb(pitch_tgt.unsqueeze(1)).transpose(1, 2)
 
         enc_out = enc_out + pitch_emb
