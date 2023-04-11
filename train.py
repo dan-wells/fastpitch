@@ -174,7 +174,7 @@ def init_distributed(rank, args):
 
 def last_checkpoint(output):
     saved = sorted(
-        glob.glob(f'{output}/FastPitch_checkpoint_*.pt'),
+        glob.glob(f'{output}/fastpitch_*.pt'),
         key=lambda f: int(re.search('_(\d+).pt', f).group(1)))
 
     def corrupted(fpath):
@@ -204,7 +204,7 @@ def maybe_save_checkpoint(args, model, ema_model, optimizer, scaler, epoch,
     if not intermediate and epoch < args.epochs:
         return
 
-    fpath = os.path.join(args.output, f"FastPitch_checkpoint_{epoch}.pt")
+    fpath = os.path.join(args.output, f"fastpitch_{epoch}.pt")
     print(f"Saving model and optimizer state at epoch {epoch} to {fpath}")
     ema_dict = None if ema_model is None else ema_model.state_dict()
     checkpoint = {'epoch': epoch,
