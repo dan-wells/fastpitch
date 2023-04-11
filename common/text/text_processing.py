@@ -109,11 +109,13 @@ class TextProcessor(object):
         self.id_to_symbol = {i: s for i, s in enumerate(self.symbols)}
 
     def text_to_ids(self, text):
-        # skip any unknown symbols -- more likely to be e.g. unanticipated
-        # punctuation for text inputs compared to pre-defined phone sets
-        # NOTE: this will not play nicely with durations from forced alignments
-        # which do _not_ ignore unknown symbols, but should be fine for MAS
-        return [self.symbol_to_id[i] for i in text if i in self.symbol_to_id]
+        ids = []
+        for i in text:
+            try:
+                ids.append(self.symbol_to_id[i])
+            except KeyError:
+                raise KeyError("Unknown symbol {} in utterance: {}".format(i, text))
+        return ids
 
     def ids_to_text(self, ids):
         symbols = [self.id_to_symbol[i] for i in ids]
