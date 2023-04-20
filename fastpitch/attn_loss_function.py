@@ -16,15 +16,50 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class AttentionCTCLoss(torch.nn.Module):
-    def __init__(self, blank_logprob=-1):
+    def __init__(self, blank_logprob=-1, batched=False):
         super(AttentionCTCLoss, self).__init__()
         self.log_softmax = torch.nn.LogSoftmax(dim=-1)
         self.blank_logprob = blank_logprob
         self.CTCLoss = nn.CTCLoss(zero_infinity=True)
 
-    def forward(self, attn_logprob, in_lens, out_lens):
+        if batched:
+            self.forward = self.forward_batched
+
+    def forward(self, attn_logprob, text_lens, mel_lens):
+        """Calculate CTC alignment loss between embedded texts and mel features
+
+        Args:
+          attn_logprob: batch x 1 x max(mel_lens) x max(text_lens)
+            Batched tensor of attention log probabilities, padded to length of
+            longest sequence in each dimension.
+          text_lens: batch-D vector of lengths of each text sequence
+          mel_lens: batch-D vector of lengths of each mel sequence
+
+        Returns:
+          cost: Average CTC loss over batch
+        """
+        # Add blank token to attention matrix, with small emission probability
+        # at all timesteps
+        attn_logprob = F.pad(
+            attn_logprob, pad=(1, 0, 0, 0, 0, 0), value=self.blank_logprob)
+
+        cost = 0.0
+        for bid in range(attn_logprob.shape[0]):
+            # Construct target sequence: each text token is mapped to its
+            # sequence index, enforcing monotonicity constraint
+            target_seq = torch.arange(1, text_lens[bid] + 1).unsqueeze(0)
+
+            curr_logprob = attn_logprob[bid].permute(1, 0, 2)
+            curr_logprob = curr_logprob[:mel_lens[bid], :, :text_lens[bid] + 1]
+            curr_logprob = self.log_softmax(curr_logprob[None])[0]
+            cost += self.CTCLoss(curr_logprob, target_seq,
+                input_lengths=mel_lens[bid], target_lengths=text_lens[bid])
+
+        cost = cost / attn_logprob.shape[0]
+        return cost
+
+    def forward_batched(self, attn_logprob, in_lens, out_lens):
         key_lens = in_lens
         query_lens = out_lens
         max_key_len = attn_logprob.size(-1)
