@@ -204,7 +204,10 @@ def batch_to_gpu(batch, symbol_type='char', mas=False):
     input_lengths = to_gpu(input_lengths).long()
     mel_padded = to_gpu(mel_padded).float()
     output_lengths = to_gpu(output_lengths).long()
-    dur_padded = to_gpu(dur_padded).long()
+    if mas:
+        dur_padded = to_gpu(dur_padded).float()
+    else:
+        dur_padded = to_gpu(dur_padded).long()
     pitch_padded = to_gpu(pitch_padded).float()
     if speaker is not None:
         speaker = to_gpu(speaker).long()

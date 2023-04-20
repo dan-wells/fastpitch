@@ -406,7 +406,7 @@ def main():
             durations = extract_duration_prior(text_len, mel_len)
             text = dataset.tp.ids_to_text(text.numpy())
         fpath = os.path.join(args.dataset_path, 'durations', fname + '.pt')
-        torch.save(torch.LongTensor(durations), fpath)
+        torch.save(torch.tensor(durations), fpath)
         # texts have been modified here: silences from textgrids, run-length encoding of units
         fname_text[fname] = text
 
