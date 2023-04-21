@@ -23,14 +23,14 @@ list of audio files and corresponding forced alignments:
 ```sh
 python prepare_dataset.py \
   --dataset-path $DATA_ROOT \
-  --wav-text-filelist $FILELIST \
+  --wav-text-filelists $FILELIST \
   --durations-from textgrid
 ```
 
 `$DATA_ROOT` is the directory where all derived features will be stored, in
 subdirectories `mels`, `pitches` and `durations`. A file listing global pitch
 mean and standard deviation will also be written here, to
-`$DATA_ROOT/pitches_stats__${FILELIST_STEM}.json`.
+`$DATA_ROOT/pitches_stats__$FILELIST_STEM.json`.
 
 You should make all audio files in `$FILELIST` accessible under
 `$DATA_ROOT/wavs`, and corresponding forced alignments represented as Praat
@@ -44,17 +44,18 @@ filenames and transcripts in your desired symbol set, with lines like:
 The expected path to the TextGrid file representing alignment information for
 this utterance is `/path/to/data_root/TextGrid/audio1.TextGrid`.
 
-Use the `--output-meta-file` option to write a metadata file collecting paths to
-all extracted features and preprocessed transcripts per utterance which can be
-passed directly to `train.py` for model training. Alternatively, you can put
-this file together yourself, with lines like:
+Use the `--write-meta` option to write a metadata file
+`$DATA_ROOT/$FILELIST_STEM.meta.txt` collecting paths to all extracted
+features and preprocessed transcripts per utterance which can be passed
+directly to `train.py` for model training.  Alternatively, you can put this
+file together yourself, with lines like:
 
 ```
 mels/audio1.pt|durations/audio1.pt|pitches/audio1.pt|<transcript>[|<speaker_id>]
 ```
 
 Note that paths to feature files are relative to the provided `--dataset-path`,
-which will also be passed to `train.py`. Integer speaker IDs are an optional
+which should also be passed to `train.py`. Integer speaker IDs are an optional
 field in case you want to train a multi-speaker model.
 
 ### Supported input representations
@@ -202,9 +203,9 @@ for fundamental frequency estimation. Framewise estimates are averaged per input
 symbol for easier interpretation and more stable performance.
 
 We also have an option to use the more accurate [probabilistic YIN](https://librosa.org/doc/main/generated/librosa.pyin.html),
-but this algorithm runs consderably slower. If you know the expected pitch range
+but this algorithm runs considerably slower. If you know the expected pitch range
 in your data, then you can narrow the corresponding hypothesis space for pYIN by
-adjusting `--pitch-f{min,max}` (defaults 50--600 Hz) to speed things up a bit.
+adjusting `--pitch-f{min,max}` (defaults 40--600 Hz) to speed things up a bit.
 
 Framewise pitch values are averaged per input symbol to provide pitch targets
 during training. This is done during data preprocessing when extracting target

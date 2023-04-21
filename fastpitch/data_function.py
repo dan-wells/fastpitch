@@ -25,12 +25,175 @@
 #
 # *****************************************************************************
 
-import numpy as np
-import torch
+import functools
+import json
+import os
+from itertools import groupby
 
-import common.layers as layers
+import librosa
+import numpy as np
+import tgt
+import torch
+from scipy import ndimage
+from scipy.stats import betabinom
+
+from common.layers import TacotronSTFT
 from common.utils import load_filepaths_and_text, load_wav_to_torch, to_gpu
 from common.text.text_processing import TextProcessor, PhoneProcessor, UnitProcessor
+
+
+def extract_durs_from_textgrid(tg_path, sampling_rate, hop_length, mel_len):
+    # TODO: Something better than forcing consistent filepaths between
+    # wavs and TextGrids
+    try:
+        textgrid = tgt.io.read_textgrid(tg_path, include_empty_intervals=True)
+    except FileNotFoundError:
+        print('Expected consistent filepaths between wavs and TextGrids, e.g.')
+        print('  /path/to/wavs/speaker_uttID.wav -> /path/to/TextGrid/speaker_uttID.TextGrid')
+        raise
+
+    phones, durs, start, end = parse_textgrid(
+        textgrid.get_tier_by_name('phones'), sampling_rate, hop_length)
+    durs = np.array(durs)
+    assert durs.sum() == mel_len, f'Length mismatch: {fname}, {sum(durs)} != {mel_len}'
+    return durs, phones, start, end
+
+
+def parse_textgrid(tier, sampling_rate, hop_length):
+    sil_phones = ["sil", "sp", "spn", ""]  # mfa uses blank for silence
+    start_time = tier[0].start_time
+    end_time = tier[-1].end_time
+    phones = []
+    durations = []
+    for i, t in enumerate(tier._objects):
+        s, e, p = t.start_time, t.end_time, t.text
+        if p not in sil_phones:
+            phones.append(p)
+        else:
+            if (i == 0) or (i == len(tier) - 1):
+                # leading or trailing silence
+                phones.append("sil")
+            else:
+                # short pause between words
+                phones.append("sp")
+        durations.append(int(np.ceil(e * sampling_rate / hop_length)
+                             - np.ceil(s * sampling_rate / hop_length)))
+    n_samples = end_time * sampling_rate
+    n_frames = n_samples / hop_length
+    # fix occasional length mismatches at the end of utterances when
+    # duration in samples is an integer multiple of hop_length
+    if n_frames.is_integer():
+        durations[-1] += 1
+    return phones, durations, start_time, end_time
+
+
+def extract_durs_from_unit_sequence(text, mel_len):
+    text = text.numpy()
+    units, durs = run_length_encode(text)
+    total_dur = sum(durs)
+
+    # Extracted HuBERT feature sequences are frequently 1-frame short because
+    # they truncate rather than padding utterances whose durations in samples
+    # are not integer multiples of hop_length. If duration is also an integer
+    # multiple of FFT filter length, we lose an additional frame (2 frames
+    # short) -- catch both cases here
+    if total_dur != mel_len:
+        dur_diff = mel_len - total_dur
+        durs[-1] += dur_diff
+
+    durs = np.array(durs)
+    assert durs.sum() == mel_len
+    return durs, units
+
+
+def run_length_encode(symbols):
+    units = []
+    run_lengths = []
+    for unit, run in groupby(symbols):
+        units.append(str(unit))
+        run_lengths.append(len(list(run)))
+    return units, run_lengths
+
+
+class BetaBinomialInterpolator:
+    """Interpolates alignment prior matrices to save computation.
+
+    Calculating beta-binomial priors is costly. Instead cache popular sizes
+    and use img interpolation to get priors faster.
+    """
+    def __init__(self, round_mel_len_to=100, round_text_len_to=20):
+        self.round_mel_len_to = round_mel_len_to
+        self.round_text_len_to = round_text_len_to
+        self.bank = functools.lru_cache(beta_binomial_prior_distribution)
+
+    def round(self, val, to):
+        return max(1, int(np.round((val + 1) / to))) * to
+
+    def __call__(self, w, h):
+        bw = self.round(w, to=self.round_mel_len_to)
+        bh = self.round(h, to=self.round_text_len_to)
+        ret = ndimage.zoom(self.bank(bw, bh).T, zoom=(w / bw, h / bh), order=1)
+        assert ret.shape[0] == w, ret.shape
+        assert ret.shape[1] == h, ret.shape
+        return ret
+
+
+def beta_binomial_prior_distribution(phoneme_count, mel_count, scaling=1.0):
+    P = phoneme_count
+    M = mel_count
+    x = np.arange(0, P)
+    mel_text_probs = []
+    for i in range(1, M+1):
+        a, b = scaling * i, scaling * (M + 1 - i)
+        rv = betabinom(P, a, b)
+        mel_i_prob = rv.pmf(x)
+        mel_text_probs.append(mel_i_prob)
+    return np.array(mel_text_probs)
+
+
+def extract_duration_prior(text_len, mel_len):
+    binomial_interpolator = BetaBinomialInterpolator()
+    attn_prior = binomial_interpolator(mel_len, text_len)
+    #attn_prior = beta_binomial_prior_distribution(text_len, mel_len)
+    assert mel_len == attn_prior.shape[0]
+    return attn_prior
+
+
+def estimate_pitch(wav, mel_len, fmin=40, fmax=600, sr=None, hop_length=256,
+                   method='yin', start=None, end=None):
+    try:
+        trimmed_dur = end - start
+    except TypeError:
+        # either start or end is None => don't need to calculate final duration
+        trimmed_dur = end
+    snd, sr = librosa.load(wav, sr=sr, offset=start, duration=trimmed_dur)
+
+    if method == 'yin':
+        pitch = librosa.yin(snd, fmin=fmin, fmax=fmax, sr=sr, hop_length=hop_length)
+    elif method == 'pyin':
+        pitch, voiced_flags, voiced_probs  = librosa.pyin(
+            snd, fmin=fmin, fmax=fmax, sr=sr, hop_length=hop_length, fill_na=0.0)
+
+    assert np.abs(mel_len - pitch.shape[0]) <= 1.0, \
+        f'{mel_len}, {pitch.shape[0]} ({pitch.shape})'
+    return pitch
+
+
+def normalize_pitch(pitch, mean, std):
+    zero_idxs = np.where(pitch == 0.0)[0]
+    pitch -= mean
+    pitch /= std
+    pitch[zero_idxs] = 0.0
+    return pitch
+
+
+def average_pitch_per_symbol(pitch, durs):
+    durs_cum = np.cumsum(np.pad(durs, (1, 0)))
+    pitch_char = np.zeros((durs.shape[0],), dtype=float)
+    for idx, (a, b) in enumerate(zip(durs_cum[:-1], durs_cum[1:])):
+        values = pitch[a:b][np.where(pitch[a:b] != 0.0)[0]]
+        pitch_char[idx] = np.mean(values) if len(values) > 0 else 0.0
+    return pitch_char
 
 
 class TextMelAliLoader(torch.utils.data.Dataset):
@@ -41,9 +204,18 @@ class TextMelAliLoader(torch.utils.data.Dataset):
     """
     def __init__(self, dataset_path, audiopaths_and_text, text_cleaners, n_mel_channels,
                  input_type='char', symbol_set='english_basic', n_speakers=1,
-                 load_mel_from_disk=True, max_wav_value=None, sampling_rate=None,
-                 filter_length=None, hop_length=None, win_length=None,
-                 mel_fmin=None, mel_fmax=None, peak_norm=False, **kwargs):
+                 load_mel_from_disk=True, load_durs_from_disk=True, load_pitch_from_disk=True,
+                 max_wav_value=32768.0, sampling_rate=22050,
+                 filter_length=512, hop_length=256, win_length=512,
+                 mel_fmin=0.0, mel_fmax=8000.0, peak_norm=False,
+                 durations_from=None, trim_silence_dur=None,
+                 pitch_fmin=40.0, pitch_fmax=600.0, pitch_method='yin',
+                 pitch_mean=None, pitch_std=None, pitch_mean_std_file=None,
+                 **kwargs):
+        if type(audiopaths_and_text) is str:
+            audiopaths_and_text = [audiopaths_and_text]
+
+        self.dataset_path = dataset_path
         self.audiopaths_and_text = load_filepaths_and_text(
             dataset_path, audiopaths_and_text,
             has_speakers=(n_speakers > 1))
@@ -60,21 +232,75 @@ class TextMelAliLoader(torch.utils.data.Dataset):
             self.tp = PhoneProcessor(self.symbol_set, self.input_type)
         self.n_symbols = len(self.tp.symbols)
 
+        self.max_wav_value = max_wav_value
+        self.peak_norm = peak_norm
+        self.sampling_rate = sampling_rate
+        self.hop_length = hop_length
+        self.filter_length = filter_length
+        self.win_length = win_length
+
         self.load_mel_from_disk = load_mel_from_disk
         if not load_mel_from_disk:
-            self.max_wav_value = max_wav_value
-            self.peak_norm = peak_norm
-            self.sampling_rate = sampling_rate
-            self.stft = layers.TacotronSTFT(
+            self.stft = TacotronSTFT(
                 filter_length, hop_length, win_length,
                 n_mel_channels, sampling_rate, mel_fmin, mel_fmax)
 
+        self.load_durs_from_disk = load_durs_from_disk
+        self.durations_from = durations_from
+        self.trim_silence_dur = trim_silence_dur
+        if trim_silence_dur is not None:
+            assert durations_from == 'textgrid', \
+                "Can only trim silences based on TextGrid alignments"
+
+        self.load_pitch_from_disk = load_pitch_from_disk
+        self.pitch_fmin = pitch_fmin
+        self.pitch_fmax = pitch_fmax
+        self.pitch_method = pitch_method
+        if pitch_mean_std_file is not None:
+            with open(pitch_mean_std_file) as f:
+                stats = json.load(f)
+            self.pitch_mean = stats['mean']
+            self.pitch_std = stats['std']
+        else:
+            self.pitch_mean = pitch_mean
+            self.pitch_std = pitch_std
+        self.pitch_char = (not load_pitch_from_disk) and (durations_from != 'attn_prior')
+
+    def __len__(self):
+        return len(self.audiopaths_and_text)
+
+    def __getitem__(self, index):
+        # separate filename and text
+        if self.n_speakers > 1:
+            audiopath, *fields, text, speaker = self.audiopaths_and_text[index]
+            speaker = int(speaker)
+        else:
+            audiopath, *fields, text = self.audiopaths_and_text[index]
+            speaker = None
+        fname = os.path.splitext(os.path.basename(audiopath))[0]
+
+        mel = self.get_mel(audiopath)
+        text = self.get_text(text)
+        # NB. texts may have been modified here, e.g. lowercasing, silences
+        # from textgrids, run-length encoding of units
+        dur, text, start_time, end_time = self.get_duration(index, text, mel.size(-1))
+        pitch = self.get_pitch(index, dur, start_time, end_time, per_sym=self.pitch_char)
+
+        if self.trim_silence_dur is not None:
+            text, mel, dur, pitch = self.trim_silence(
+                text, mel, dur, pitch, self.trim_silence_dur,
+                self.sampling_rate, self.hop_length)
+
+        return text, mel, len(text), dur, pitch, speaker, fname
+
     def get_mel(self, filename):
-        if not self.load_mel_from_disk:
+        if self.load_mel_from_disk:
+            melspec = torch.load(filename)
+        else:
             audio, sampling_rate = load_wav_to_torch(filename)
             if sampling_rate != self.stft.sampling_rate:
                 raise ValueError("{} {} SR doesn't match target {} SR".format(
-                    sampling_rate, self.stft.sampling_rate))
+                    filename, sampling_rate, self.stft.sampling_rate))
             if self.peak_norm:
                 audio = (audio / torch.max(torch.abs(audio))) * (self.max_wav_value - 1)
             audio_norm = audio / self.max_wav_value
@@ -82,32 +308,112 @@ class TextMelAliLoader(torch.utils.data.Dataset):
             audio_norm = torch.autograd.Variable(audio_norm, requires_grad=False)
             melspec = self.stft.mel_spectrogram(audio_norm)
             melspec = torch.squeeze(melspec, 0)
-        else:
-            melspec = torch.load(filename)
         return melspec
 
     def get_text(self, text):
         text_encoded = torch.IntTensor(self.tp.encode_text(text))
         return text_encoded
 
-    def __getitem__(self, index):
-        # separate filename and text
-        if self.n_speakers > 1:
-            audiopath, durpath, pitchpath, text, speaker = self.audiopaths_and_text[index]
-            speaker = int(speaker)
+    def get_duration(self, index, text=None, mel_len=None):
+        audiopath, *fields = self.audiopaths_and_text[index]
+        start_time, end_time = None, None
+        if self.load_durs_from_disk:
+            durpath = fields[0]
+            durations = torch.load(durpath)
         else:
-            audiopath, durpath, pitchpath, text = self.audiopaths_and_text[index]
-            speaker = None
-        len_text = len(text)
-        text = self.get_text(text)
-        mel = self.get_mel(audiopath)
-        # expect always to load duration and pitch targets from disk
-        dur = torch.load(durpath)
-        pitch = torch.load(pitchpath)
-        return (text, mel, len_text, dur, pitch, speaker)
+            if self.durations_from == 'textgrid':
+                utt_id = os.path.splitext(os.path.basename(audiopath))[0]
+                tg_path = os.path.join(self.dataset_path, 'TextGrid', utt_id + '.TextGrid')
+                durations, text, start_time, end_time = extract_durs_from_textgrid(
+                    tg_path, self.sampling_rate, self.hop_length, mel_len)
+                text = ' '.join(text)
+            elif self.durations_from == 'unit_rle':
+                text = fields[2]
+                durations, text = extract_durs_from_unit_sequence(text, mel_len)
+                text = ' '.join(text)
+            elif self.durations_from == 'attn_prior':
+                durations = extract_duration_prior(len(text), mel_len)
+                text = self.tp.ids_to_text(text.numpy())
+        return durations, text, start_time, end_time
 
-    def __len__(self):
-        return len(self.audiopaths_and_text)
+    def get_pitch(self, index, dur=None, start_time=None, end_time=None, per_sym=False):
+        audiopath, *fields = self.audiopaths_and_text[index]
+        if self.load_pitch_from_disk:
+            pitchpath = fields[1]
+            pitch = torch.load(pitchpath)
+        else:
+            if self.durations_from == 'attn_prior':
+                mel_len, text_len = dur.shape
+            else:
+                mel_len, text_len = dur.sum(), dur.size
+            pitch = estimate_pitch(
+                audiopath, mel_len, self.pitch_fmin, self.pitch_fmax,
+                self.sampling_rate, self.hop_length, self.pitch_method,
+                start_time, end_time)
+
+        if self.pitch_mean is not None:
+            assert self.pitch_std is not None
+            pitch = normalize_pitch(pitch, self.pitch_mean, self.pitch_std)
+        if per_sym:
+            pitch = average_pitch_per_symbol(pitch, dur)
+
+        if not self.load_pitch_from_disk:
+            if self.durations_from == 'attn_prior':
+                assert pitch.shape[0] == mel_len
+            else:
+                assert pitch.shape[0] == text_len
+        return pitch
+
+    def trim_silence(self, text, mel, durations, pitch, keep_sil_frames,
+                     sampling_rate, hop_length):
+        if keep_sil_frames > 0:
+            keep_sil_frames = np.round(keep_sil_frames * sampling_rate / hop_length)
+        keep_sil_frames = int(keep_sil_frames)
+
+        if type(text) is str:
+            text = text.split()
+        text = np.array(text)
+        sil_idx = np.where(text == 'sil')[0]
+
+        sil_durs = durations[sil_idx]
+        trim_durs = np.array(
+            [d - keep_sil_frames if d > keep_sil_frames else 0 for d in sil_durs],
+            dtype=np.int64)
+        if trim_durs.size == 2:
+            # trim both sides
+            trim_start, trim_end = trim_durs
+            trim_end = -trim_end
+        elif trim_durs.size == 0:
+            # nothing to trim
+            trim_start, trim_end = None, None
+        elif sil_idx[0] == 0:
+            # trim only leading silence
+            trim_start, trim_end = trim_durs[0], None
+        elif sil_idx[0] == len(text) - 1:
+            # trim only trailing silence
+            trim_start, trim_end = None, -trim_durs[0]
+        if trim_end == 0:
+            # don't trim trailing silence if already short enough
+            trim_end = None
+
+        if keep_sil_frames == 0:
+            sil_mask = text != "sil"
+        else:
+            sil_mask = np.ones_like(text, dtype=bool)
+        mel = mel[:, trim_start:trim_end]
+        durations.put(sil_idx, sil_durs - trim_durs)
+        durations = durations[sil_mask]
+        assert mel.shape[1] == durations.sum()#, \
+            #"{}: Trimming led to mismatched durations ({}) and mels ({})".format(
+            #    fname, sum(durations), mel.shape[1])
+        pitch = pitch[sil_mask]
+        assert len(pitch) == len(durations)#, \
+            #"{}: Trimming led to mismatched durations ({}) and pitches ({})".format(
+            #    fname, len(durations), len(pitch))
+        text = text[sil_mask]
+        assert len(text) == len(durations)
+        text = ' '.join(text)
+        return text, mel, durations, pitch
 
 
 class TextMelAliCollate():
