@@ -128,8 +128,8 @@ def parse_args(parser):
     return parser
 
 
-def load_model_from_ckpt(checkpoint_path, ema, model):
-    checkpoint_data = torch.load(checkpoint_path)
+def load_model_from_ckpt(checkpoint_path, ema, model, device):
+    checkpoint_data = torch.load(checkpoint_path, map_location=device)
     status = ''
 
     if 'state_dict' in checkpoint_data:
@@ -166,7 +166,7 @@ def load_and_setup_model(model_name, parser, checkpoint, amp, device,
                              forward_is_infer=forward_is_infer)
 
     if checkpoint is not None:
-        model = load_model_from_ckpt(checkpoint, ema, model)
+        model = load_model_from_ckpt(checkpoint, ema, model, device)
 
     if model_name == "HiFi-GAN":
         model.remove_weight_norm()
