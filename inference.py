@@ -419,7 +419,7 @@ def main():
                         else:
                             fname = f'mel_{all_utterances + i}.pt'
                         mel_path = os.path.join(args.output, fname)
-                        torch.save(_mel.cpu(), mel_path)
+                        torch.save(_mel.clone().cpu(), mel_path)
 
             if vocoder is not None:
                 with torch.no_grad(), vocoder_measures:
