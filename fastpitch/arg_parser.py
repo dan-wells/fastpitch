@@ -69,6 +69,8 @@ def parse_fastpitch_args(parent, add_help=False):
                         help='Use depthwise separable convolutions')
     in_fft.add_argument('--in-fft-output-size', default=384, type=int,
                         help='Output dim')
+    in_fft.add_argument('--in-fft-post-cond', action='store_true',
+                        help='Add conditioning after FFT blocks')
     in_fft.add_argument('--p-in-fft-dropout', default=0.1, type=float,
                         help='Dropout probability')
     in_fft.add_argument('--p-in-fft-dropatt', default=0.1, type=float,

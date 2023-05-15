@@ -103,7 +103,7 @@ class FastPitch(nn.Module):
                  symbols_embedding_dim, use_sepconv, use_mas,
                  in_fft_n_layers, in_fft_n_heads, in_fft_d_head,
                  in_fft_conv1d_kernel_size, in_fft_conv1d_filter_size,
-                 in_fft_sepconv, in_fft_output_size,
+                 in_fft_sepconv, in_fft_output_size, in_fft_post_cond,
                  p_in_fft_dropout, p_in_fft_dropatt, p_in_fft_dropemb,
                  out_fft_n_layers, out_fft_n_heads, out_fft_d_head,
                  out_fft_conv1d_kernel_size, out_fft_conv1d_filter_size,
@@ -133,7 +133,8 @@ class FastPitch(nn.Module):
             n_embed=n_symbols,
             padding_idx=padding_idx,
             input_type=symbol_type,
-            sepconv=in_fft_sepconv or use_sepconv
+            sepconv=in_fft_sepconv or use_sepconv,
+            post_cond=in_fft_post_cond
         )
 
         if n_speakers > 1:

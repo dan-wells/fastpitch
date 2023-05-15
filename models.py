@@ -88,6 +88,7 @@ def get_model_config(model_name, args):
             in_fft_conv1d_filter_size=args.in_fft_conv1d_filter_size,
             in_fft_sepconv=args.in_fft_sepconv,
             in_fft_output_size=args.in_fft_output_size,
+            in_fft_post_cond=args.in_fft_post_cond,
             p_in_fft_dropout=args.p_in_fft_dropout,
             p_in_fft_dropatt=args.p_in_fft_dropatt,
             p_in_fft_dropemb=args.p_in_fft_dropemb,

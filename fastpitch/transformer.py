@@ -177,12 +177,13 @@ class FFTransformer(nn.Module):
     def __init__(self, n_layer, n_head, d_model, d_head, d_inner, kernel_size,
                  dropout, dropatt, dropemb=0.0, embed_input=True,
                  n_embed=None, d_embed=None, padding_idx=0, input_type=None,
-                 sepconv=False, pre_lnorm=False):
+                 sepconv=False, pre_lnorm=False, post_cond=False):
         super(FFTransformer, self).__init__()
         self.d_model = d_model
         self.n_head = n_head
         self.d_head = d_head
         self.padding_idx = padding_idx
+        self.post_cond = post_cond
 
         self.input_type = input_type
         if embed_input:
@@ -221,10 +222,14 @@ class FFTransformer(nn.Module):
         pos_seq = torch.arange(inp.size(1), device=inp.device).to(inp.dtype)
         pos_emb = self.pos_emb(pos_seq) * mask
 
-        out = self.drop(inp + pos_emb + conditioning)
+        if not self.post_cond:
+            inp = inp + conditioning
+        out = self.drop(inp + pos_emb)
 
         for layer in self.layers:
             out = layer(out, mask=mask)
 
+        if self.post_cond:
+            out = out + conditioning
         # out = self.drop(out)
         return out, mask
