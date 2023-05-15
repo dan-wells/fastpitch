@@ -25,6 +25,7 @@
 #
 # *****************************************************************************
 
+import csv
 import os
 from typing import Optional
 
@@ -51,21 +52,21 @@ def load_wav_to_torch(full_path, force_sampling_rate=None):
     return torch.FloatTensor(data.astype(np.float32)), sampling_rate
 
 
-def load_filepaths_and_text(dataset_path, fnames, has_speakers=False, split="|"):
-    def split_line(root, line):
-        # don't strip trailing space, in case we added it to transcript
-        # to represent trailing silence
-        parts = line.strip('\n').split(split)
-        if has_speakers:
-            paths, non_paths = parts[:-2], parts[-2:]
-        else:
-            paths, non_paths = parts[:-1], parts[-1:]
-        return tuple(os.path.join(root, p) for p in paths) + tuple(non_paths)
-
+def load_filepaths_and_text(dataset_path, fnames, has_speakers=False, delim="|"):
+    data_fields = ['audio', 'pitch', 'duration']
+    fields = ['text', 'speaker'] + data_fields  # TODO: add fname here
     fpaths_and_text = []
     for fname in fnames:
         with open(fname, encoding='utf-8') as f:
-            fpaths_and_text += [split_line(dataset_path, line) for line in f]
+            reader = csv.DictReader(f, delimiter=delim, restval=None)
+            # return default None for any unspecified fields
+            reader.fieldnames.extend(
+                i for i in fields if i not in reader.fieldnames)
+            for line in reader:
+                for k, v in line.items():
+                    if k in data_fields and v is not None:
+                        line[k] = os.path.join(dataset_path, v)
+                fpaths_and_text.append(line)
     return fpaths_and_text
 
 

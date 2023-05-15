@@ -192,11 +192,14 @@ def main():
 
         if args.write_meta:
             if args.n_speakers > 1:
+                meta_header = 'audio|duration|pitch|text|speaker\n'
                 meta_line = 'mels/{0}.pt|durations/{0}.pt|pitches/{0}.pt|{1}|{2}\n'
             else:
+                meta_header = 'audio|duration|pitch|text\n'
                 meta_line = 'mels/{0}.pt|durations/{0}.pt|pitches/{0}.pt|{1}\n'
             meta_file = os.path.join(args.dataset_path, label + '.meta.txt')
             with open(meta_file, 'w') as meta_out:
+                meta_out.write(meta_header)
                 for fname, text in fname_text.items():
                     meta_out.write(meta_line.format(fname, text, fname_spkr[fname]))
     DLLogger.flush()

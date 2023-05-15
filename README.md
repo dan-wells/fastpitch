@@ -35,9 +35,11 @@ mean and standard deviation will also be written here, to
 You should make all audio files in `$FILELIST` accessible under
 `$DATA_ROOT/wavs`, and corresponding forced alignments represented as Praat
 TextGrids under `$DATA_ROOT/TextGrid`. `$FILELIST` should contain audio
-filenames and transcripts in your desired symbol set, with lines like:
+filenames and transcripts in your desired symbol set, with a header row and
+lines like:
 
 ```
+audio|text
 /path/to/data_root/wavs/audio1.wav|this is a text transcript
 ```
 
@@ -47,10 +49,11 @@ this utterance is `/path/to/data_root/TextGrid/audio1.TextGrid`.
 Use the `--write-meta` option to write a metadata file
 `$DATA_ROOT/$FILELIST_STEM.meta.txt` collecting paths to all extracted
 features and preprocessed transcripts per utterance which can be passed
-directly to `train.py` for model training.  Alternatively, you can put this
-file together yourself, with lines like:
+directly to `train.py` for model training. Alternatively, you can put this
+file together yourself, with a header row and lines like:
 
 ```
+audio|duration|pitch|text[|speaker]
 mels/audio1.pt|durations/audio1.pt|pitches/audio1.pt|<transcript>[|<speaker_id>]
 ```
 
@@ -258,9 +261,9 @@ After training has completed, we can predict mel spectrograms from test
 transcripts, and optionally generate speech audio using a separate vocoder
 model.
 
-First, prepare an input metadata file. This should be a TSV file with a header
-row indicating whichever of the following fields you care to provide (so order does
-not matter):
+First, prepare an input metadata file with pipe-separated values and a header
+row indicating whichever of the following fields you care to provide (so order
+does not matter):
 
 - `text`, transcripts of test utterances
 - `output`, path to save synthesized speech audio

@@ -295,9 +295,9 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
                 # TODO: sort utterances by mel length rather than more variable text length
                 # for consistent sample across different experiments
                 batch_audiopaths_and_text = sorted(valset.audiopaths_and_text[:batch_size],
-                                                   key=lambda x: len(valset.get_text(x[3])),
+                                                   key=lambda x: len(valset.get_text(x['text'])),
                                                    reverse=True)
-                tb_fnames = [i[0] for i in batch_audiopaths_and_text]
+                tb_fnames = [i['audio'] for i in batch_audiopaths_and_text]
                 plot_spectrograms(
                     y_pred, tb_fnames, total_iter, n=4, label='Predicted spectrogram', mas=mas)
                 if vocoder is not None:
@@ -570,9 +570,9 @@ def train(rank, args):
         # TODO: sort utterances by mel length rather than more variable text length
         # for consistent sample across different experiments
         batch_audiopaths_and_text = sorted(valset.audiopaths_and_text[:args.batch_size],
-                                           key=lambda x: len(valset.get_text(x[3])),
+                                           key=lambda x: len(valset.get_text(x['text'])),
                                            reverse=True)
-        tb_fnames = [i[0] for i in batch_audiopaths_and_text]
+        tb_fnames = [i['audio'] for i in batch_audiopaths_and_text]
         plot_spectrograms(
             y, tb_fnames, total_iter, n=4, label='Reference spectrogram', mas=args.use_mas)
         if vocoder is not None:

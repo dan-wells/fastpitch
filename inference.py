@@ -179,12 +179,8 @@ def load_and_setup_model(model_name, parser, checkpoint, amp, device,
 
 def load_fields(fpath):
     lines = [l.strip() for l in open(fpath, encoding='utf-8')]
-    if fpath.endswith('.tsv'):
-        columns = lines[0].split('\t')
-        fields = list(zip(*[t.split('\t') for t in lines[1:]]))
-    else:
-        columns = ['text']
-        fields = [lines]
+    columns = lines[0].split('|')
+    fields = list(zip(*[t.split('|') for t in lines[1:]]))
     return {c:f for c, f in zip(columns, fields)}
 
 

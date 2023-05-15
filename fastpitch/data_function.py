@@ -270,26 +270,26 @@ class TextMelAliLoader(torch.utils.data.Dataset):
         return len(self.audiopaths_and_text)
 
     def __getitem__(self, index):
-        # separate filename and text
-        if self.n_speakers > 1:
-            audiopath, *fields, text, speaker = self.audiopaths_and_text[index]
-            speaker = int(speaker)
-        else:
-            audiopath, *fields, text = self.audiopaths_and_text[index]
-            speaker = None
+        fields = self.audiopaths_and_text[index]
+
+        audiopath = fields['audio']
+        mel = self.get_mel(audiopath)
         fname = os.path.splitext(os.path.basename(audiopath))[0]
 
-        mel = self.get_mel(audiopath)
-        text = self.get_text(text)
+        text = self.get_text(fields['text'])
         # NB. texts may have been modified here, e.g. lowercasing, silences
         # from textgrids, run-length encoding of units
-        dur, text, start_time, end_time = self.get_duration(index, text, mel.size(-1))
-        pitch = self.get_pitch(index, dur, start_time, end_time, per_sym=self.pitch_char)
+        dur, text, start_time, end_time = self.get_duration(fields, text, mel.size(-1), fname)
+        pitch = self.get_pitch(fields, dur, start_time, end_time, per_sym=self.pitch_char)
 
         if self.trim_silence_dur is not None:
             text, mel, dur, pitch = self.trim_silence(
                 text, mel, dur, pitch, self.trim_silence_dur,
                 self.sampling_rate, self.hop_length)
+
+        speaker = fields['speaker']
+        if self.n_speakers > 1:
+            speaker = int(speaker)
 
         return text, mel, len(text), dur, pitch, speaker, fname
 
@@ -314,21 +314,18 @@ class TextMelAliLoader(torch.utils.data.Dataset):
         text_encoded = torch.IntTensor(self.tp.encode_text(text))
         return text_encoded
 
-    def get_duration(self, index, text=None, mel_len=None):
-        audiopath, *fields = self.audiopaths_and_text[index]
+    def get_duration(self, fields, text=None, mel_len=None, utt_id=None):
         start_time, end_time = None, None
         if self.load_durs_from_disk:
-            durpath = fields[0]
+            durpath = fields['duration']
             durations = torch.load(durpath)
         else:
             if self.durations_from == 'textgrid':
-                utt_id = os.path.splitext(os.path.basename(audiopath))[0]
                 tg_path = os.path.join(self.dataset_path, 'TextGrid', utt_id + '.TextGrid')
                 durations, text, start_time, end_time = extract_durs_from_textgrid(
                     tg_path, self.sampling_rate, self.hop_length, mel_len)
                 text = ' '.join(text)
             elif self.durations_from == 'unit_rle':
-                text = fields[2]
                 durations, text = extract_durs_from_unit_sequence(text, mel_len)
                 text = ' '.join(text)
             elif self.durations_from == 'attn_prior':
@@ -336,10 +333,9 @@ class TextMelAliLoader(torch.utils.data.Dataset):
                 text = self.tp.ids_to_text(text.numpy())
         return durations, text, start_time, end_time
 
-    def get_pitch(self, index, dur=None, start_time=None, end_time=None, per_sym=False):
-        audiopath, *fields = self.audiopaths_and_text[index]
+    def get_pitch(self, fields, dur=None, start_time=None, end_time=None, per_sym=False):
         if self.load_pitch_from_disk:
-            pitchpath = fields[1]
+            pitchpath = fields['pitch']
             pitch = torch.load(pitchpath)
         else:
             if self.durations_from == 'attn_prior':
@@ -347,7 +343,7 @@ class TextMelAliLoader(torch.utils.data.Dataset):
             else:
                 mel_len, text_len = dur.sum(), dur.size
             pitch = estimate_pitch(
-                audiopath, mel_len, self.pitch_fmin, self.pitch_fmax,
+                fields['audio'], mel_len, self.pitch_fmin, self.pitch_fmax,
                 self.sampling_rate, self.hop_length, self.pitch_method,
                 start_time, end_time)
 
