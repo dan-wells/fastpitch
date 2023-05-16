@@ -106,7 +106,7 @@ def stdout_metric_format(metric, metadata, value):
 
 def prefix_format(timestamp):
     timestamp = timestamp.strftime('%Y-%m-%d %H:%M:%S')
-    return "DLL {} - ".format(timestamp)
+    return "[{}] ".format(timestamp)
 
 
 def init(log_fpath, log_dir, enabled=True, tb_subsets=[], **tb_kw):

@@ -137,7 +137,8 @@ def main():
     if len(unk_args) > 0:
         raise ValueError(f'Invalid options {unk_args}')
 
-    DLLogger.init(backends=[StdOutBackend(Verbosity.VERBOSE)])
+    DLLogger.init(backends=[StdOutBackend(Verbosity.VERBOSE,
+        prefix_format=lambda t: "[{}] ".format(t.strftime('%Y-%m-%d %H:%M:%S')))])
     for k,v in vars(args).items():
         DLLogger.log(step="PARAMETER", data={k:v})
 
