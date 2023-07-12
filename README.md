@@ -53,13 +53,15 @@ directly to `train.py` for model training. Alternatively, you can put this
 file together yourself, with a header row and lines like:
 
 ```
-audio|duration|pitch|text[|speaker]
-mels/audio1.pt|durations/audio1.pt|pitches/audio1.pt|<transcript>[|<speaker_id>]
+audio|duration|pitch|text[|speaker][|language]
+mels/audio1.pt|durations/audio1.pt|pitches/audio1.pt|<transcript>[|<speaker_id>][|<language_id>]
 ```
 
 Note that paths to feature files are relative to the provided `--dataset-path`,
-which should also be passed to `train.py`. Integer speaker IDs are an optional
-field in case you want to train a multi-speaker model.
+which should also be passed to `train.py`. Integer speaker and language IDs are
+optional fields in case you want to train a multi-speaker or multi-lingual
+model (or use the associated embeddings to condition on any other factors of
+interest).
 
 ### Supported input representations
 
@@ -243,7 +245,10 @@ TensorBoard logs. Make sure to pass `--cuda` to run on GPU if available.
 For multi-speaker data, specify `--n-speakers N` to learn additional speaker
 embeddings. Input metadata files should then include integer speaker IDs as the
 final field on each line, with IDs ranging between [0, `n-speakers` - 1]. You
-can assign integer speaker IDs using `scripts/add_speaker_id_to_meta.py`.
+can assign integer speaker IDs using `scripts/add_speaker_id_to_meta.py`, as
+long as your audio filenames are of the form `<speaker_id>_<utterance_id>`.
+Similarly, you may pass `--n-langs N` for an additional conditioning factor,
+e.g. for language in a multi-lingual model.
 
 To train using monotonic alignment search instead of passing explicit input
 symbol duration targets, pass `--use-mas`. 
@@ -269,6 +274,7 @@ does not matter):
 - `output`, path to save synthesized speech audio
 - `mel_output`, path to save predicted mel spectrogram features
 - `speaker`, integer speaker ID per utterance
+- `language`, integer language ID per utterance
 - `mel`, path to load mel spectrogram features, e.g. reference values for copy
   synthesis
 - `pitch`, path to load reference pitch values
@@ -303,7 +309,9 @@ For a multi-speaker FastPitch model, pass `--n-speakers` to match the value used
 with `train.py` and specify a target speaker ID using `--speaker N` to
 synthesize all utterances in the same target speaker's voice. If `test_meta.tsv`
 includes a `speaker` field then this will take precedence, and individual
-utterances can be synthesized each using a different speaker's voice.
+utterances can be synthesized each using a different speaker's voice. The same
+also applies to the `--n-langs` and `--language` flags for multi-lingual
+models.
 
 If your model checkpoint uses depthwise separable convolutional layers, then
 also pass `--use-sepconv` to `inference.py`. Likewise, if trained with monotonic
