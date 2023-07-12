@@ -203,7 +203,7 @@ class TextMelAliLoader(torch.utils.data.Dataset):
         3) computes mel-spectrograms from audio files.
     """
     def __init__(self, dataset_path, audiopaths_and_text, text_cleaners, n_mel_channels,
-                 input_type='char', symbol_set='english_basic', n_speakers=1,
+                 input_type='char', symbol_set='english_basic', n_speakers=1, n_langs=1,
                  load_mel_from_disk=True, load_durs_from_disk=True, load_pitch_from_disk=True,
                  max_wav_value=32768.0, sampling_rate=22050,
                  filter_length=512, hop_length=256, win_length=512,
@@ -217,9 +217,9 @@ class TextMelAliLoader(torch.utils.data.Dataset):
 
         self.dataset_path = dataset_path
         self.audiopaths_and_text = load_filepaths_and_text(
-            dataset_path, audiopaths_and_text,
-            has_speakers=(n_speakers > 1))
+            dataset_path, audiopaths_and_text)
         self.n_speakers = n_speakers
+        self.n_langs = n_langs
 
         self.input_type = input_type
         self.symbol_set = symbol_set
@@ -290,8 +290,16 @@ class TextMelAliLoader(torch.utils.data.Dataset):
         speaker = fields['speaker']
         if self.n_speakers > 1:
             speaker = int(speaker)
+        else:
+            speaker = None
 
-        return text, mel, len(text), dur, pitch, speaker, fname
+        lang = fields['language']
+        if self.n_langs > 1:
+            lang = int(lang)
+        else:
+            lang = None
+
+        return text, mel, len(text), dur, pitch, speaker, lang, fname
 
     def get_mel(self, filename):
         if self.load_mel_from_disk:
@@ -488,17 +496,24 @@ class TextMelAliCollate():
         else:
             speaker = None
 
+        if batch[0][6] is not None:
+            lang = torch.zeros_like(input_lengths)
+            for i in range(len(ids_sorted_decreasing)):
+                lang[i] = batch[ids_sorted_decreasing[i]][6]
+        else:
+            lang = None
+
         # count number of items - characters in text
         len_x = [x[2] for x in batch]
         len_x = torch.Tensor(len_x)
 
         return (text_padded, input_lengths, mel_padded, output_lengths,
-                len_x, dur_padded, dur_lens, pitch_padded, speaker)
+                len_x, dur_padded, dur_lens, pitch_padded, speaker, lang)
 
 
 def batch_to_gpu(batch, symbol_type='char', mas=False):
     text_padded, input_lengths, mel_padded, output_lengths, \
-        len_x, dur_padded, dur_lens, pitch_padded, speaker = batch
+        len_x, dur_padded, dur_lens, pitch_padded, speaker, lang = batch
     if symbol_type == 'pf':
         text_padded = to_gpu(text_padded).float()
     else:
@@ -513,10 +528,12 @@ def batch_to_gpu(batch, symbol_type='char', mas=False):
     pitch_padded = to_gpu(pitch_padded).float()
     if speaker is not None:
         speaker = to_gpu(speaker).long()
+    if lang is not None:
+        lang = to_gpu(lang).long()
 
     # Alignments act as both inputs and targets - pass shallow copies
     x = [text_padded, input_lengths, mel_padded, output_lengths,
-         dur_padded, dur_lens, pitch_padded, speaker]
+         dur_padded, dur_lens, pitch_padded, speaker, lang]
     if mas:
         y = [mel_padded, input_lengths, output_lengths]
     else:

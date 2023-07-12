@@ -133,6 +133,9 @@ def parse_args(parser):
     cond.add_argument('--n-speakers', type=int, default=1,
                       help='Condition on speaker, value > 1 enables trainable '
                       'speaker embeddings.')
+    cond.add_argument('--n-langs', type=int, default=1,
+                      help='Condition on language, value > 1 enables trainable '
+                      'language embeddings.')
 
     audio = parser.add_argument_group('log generated audio')
     audio.add_argument('--hifigan', type=str, default='',

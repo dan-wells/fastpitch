@@ -120,7 +120,9 @@ def get_model_config(model_name, args):
             pitch_embedding_sepconv=args.pitch_embedding_sepconv,
             # speakers parameters
             n_speakers=args.n_speakers,
-            speaker_emb_weight=args.speaker_emb_weight
+            speaker_emb_weight=args.speaker_emb_weight,
+            n_langs=args.n_langs,
+            lang_emb_weight=args.lang_emb_weight
         )
         return model_config
     elif model_name == "HiFi-GAN":

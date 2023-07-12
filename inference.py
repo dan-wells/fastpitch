@@ -90,8 +90,6 @@ def parse_args(parser):
                         help='Repeat inference for benchmarking')
     parser.add_argument('--ema', action='store_true',
                         help='Use EMA averaged model (if saved in checkpoints)')
-    parser.add_argument('--speaker', type=int, default=0,
-                        help='Speaker ID for a multi-speaker model')
 
     transform = parser.add_argument_group('transform')
     transform.add_argument('--fade-out', type=int, default=10,
@@ -124,6 +122,12 @@ def parse_args(parser):
     cond = parser.add_argument_group('conditioning on additional attributes')
     cond.add_argument('--n-speakers', type=int, default=1,
                       help='Number of speakers in the model.')
+    cond.add_argument('--speaker', type=int, default=0,
+                        help='Speaker ID for a multi-speaker model')
+    cond.add_argument('--n-langs', type=int, default=1,
+                      help='Number of languages in the model.')
+    cond.add_argument('--language', type=int, default=0,
+                        help='Language ID for a multi-lingual model')
 
     return parser
 
@@ -185,8 +189,9 @@ def load_fields(fpath):
 
 
 def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners,
-                           batch_size=128, dataset=None, load_mels=False,
-                           load_pitch=False, load_duration=False, load_speaker=False):
+                           batch_size=128, dataset=None,
+                           load_mels=False, load_pitch=False, load_duration=False,
+                           load_speaker=False, load_lang=False):
     if input_type == 'char':
         tp = TextProcessor(symbol_set, text_cleaners)
     elif input_type == 'unit':
@@ -225,6 +230,9 @@ def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners
     if load_speaker:
         assert 'speaker' in fields
         fields['speaker'] = torch.LongTensor([int(fields['speaker'][i]) for i in order])
+    if load_lang:
+        assert 'language' in fields
+        fields['language'] = torch.LongTensor([int(fields['language'][i]) for i in order])
     if 'output' in fields:
         fields['output'] = [fields['output'][i] for i in order]
     if 'mel_output' in fields:
@@ -362,7 +370,7 @@ def main():
         fields, device, args.input_type, args.symbol_set, args.text_cleaners,
         args.batch_size, args.dataset_path, load_mels=(generator is None or 'mel' in fields),
         load_pitch=('pitch' in fields), load_duration=('duration' in fields),
-        load_speaker=('speaker' in fields))
+        load_speaker=('speaker' in fields), load_lang=('language' in fields))
 
     # Use real data rather than synthetic - FastPitch predicts len
     if args.warmup_steps:
@@ -379,6 +387,7 @@ def main():
 
     gen_kw = {'pace': args.pace,
               'speaker': args.speaker,
+              'language': args.language,
               'pitch_transform': build_pitch_transformation(args)}
 
     all_utterances = 0
@@ -398,6 +407,7 @@ def main():
                 gen_kw['dur_tgt'] = b['duration'] if 'duration' in b else None
                 gen_kw['pitch_tgt'] = b['pitch'] if 'pitch' in b else None
                 gen_kw['speaker'] = b['speaker'] if 'speaker' in b else args.speaker
+                gen_kw['language'] = b['language'] if 'language' in b else args.language
                 with torch.no_grad(), gen_measures:
                     mel, mel_lens, *_ = generator(b['text'], **gen_kw)
 

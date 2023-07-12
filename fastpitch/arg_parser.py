@@ -131,5 +131,7 @@ def parse_fastpitch_args(parent, add_help=False):
                       help='Use depthwise separable convolutions')
     cond.add_argument('--speaker-emb-weight', type=float, default=1.0,
                       help='Scale speaker embedding')
+    cond.add_argument('--lang-emb-weight', type=float, default=1.0,
+                      help='Scale language embedding')
 
     return parser

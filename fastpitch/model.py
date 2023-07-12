@@ -116,7 +116,7 @@ class FastPitch(nn.Module):
                  pitch_predictor_sepconv, p_pitch_predictor_dropout,
                  pitch_predictor_n_layers,
                  pitch_embedding_kernel_size, pitch_embedding_sepconv,
-                 n_speakers, speaker_emb_weight):
+                 n_speakers, speaker_emb_weight, n_langs, lang_emb_weight):
         super(FastPitch, self).__init__()
 
         self.encoder = FFTransformer(
@@ -142,6 +142,12 @@ class FastPitch(nn.Module):
         else:
             self.speaker_emb = None
         self.speaker_emb_weight = speaker_emb_weight
+
+        if n_langs > 1:
+            self.lang_emb = nn.Embedding(n_langs, symbols_embedding_dim)
+        else:
+            self.lang_emb = None
+        self.lang_emb_weight = lang_emb_weight
 
         self.duration_predictor = TemporalPredictor(
             in_fft_output_size,
@@ -221,7 +227,7 @@ class FastPitch(nn.Module):
 
     def forward(self, inputs, use_gt_durations=True, use_gt_pitch=True,
                 pace=1.0, max_duration=75):
-        inputs, _, mel_tgt, _, dur_tgt, _, pitch_tgt, speaker = inputs
+        inputs, _, mel_tgt, _, dur_tgt, _, pitch_tgt, speaker, language = inputs
         mel_max_len = mel_tgt.size(2)
 
         # Calculate speaker embedding
@@ -231,8 +237,14 @@ class FastPitch(nn.Module):
             spk_emb = self.speaker_emb(speaker).unsqueeze(1)
             spk_emb.mul_(self.speaker_emb_weight)
 
+        if self.lang_emb is None:
+            lang_emb = 0
+        else:
+            lang_emb = self.lang_emb(language).unsqueeze(1)
+            lang_emb.mul_(self.lang_emb_weight)
+
         # Input FFT
-        enc_out, enc_mask = self.encoder(inputs, conditioning=spk_emb)
+        enc_out, enc_mask = self.encoder(inputs, conditioning=spk_emb + lang_emb)
 
         # Predict durations
         log_dur_pred = self.duration_predictor(enc_out, enc_mask)
@@ -258,7 +270,8 @@ class FastPitch(nn.Module):
 
     def forward_mas(self, inputs, use_gt_pitch=True, pace=1.0, max_duration=75,
                     use_gt_durations=None):  # compatibility
-        (inputs, input_lens, mel_tgt, mel_lens, attn_prior, _, pitch_dense, speaker) = inputs
+        (inputs, input_lens, mel_tgt, mel_lens,
+            attn_prior, _, pitch_dense, speaker, language) = inputs
 
         text_max_len = inputs.size(1)
         mel_max_len = mel_tgt.size(2)
@@ -270,8 +283,14 @@ class FastPitch(nn.Module):
             spk_emb = self.speaker_emb(speaker).unsqueeze(1)
             spk_emb.mul_(self.speaker_emb_weight)
 
+        if self.lang_emb is None:
+            lang_emb = 0
+        else:
+            lang_emb = self.lang_emb(language).unsqueeze(1)
+            lang_emb.mul_(self.lang_emb_weight)
+
         # Input FFT
-        enc_out, enc_mask = self.encoder(inputs, conditioning=spk_emb)
+        enc_out, enc_mask = self.encoder(inputs, conditioning=spk_emb + lang_emb)
 
         # Predict durations
         log_dur_pred = self.duration_predictor(enc_out, enc_mask).squeeze(-1)
@@ -318,7 +337,7 @@ class FastPitch(nn.Module):
                 pitch_tgt, attn_soft, attn_hard, attn_hard_dur, attn_logprob)
 
     def infer(self, inputs, pace=1.0, dur_tgt=None, pitch_tgt=None,
-              pitch_transform=None, max_duration=75, speaker=0):
+              pitch_transform=None, max_duration=75, speaker=0, language=0):
 
         if self.speaker_emb is None:
             spk_emb = 0
@@ -327,8 +346,15 @@ class FastPitch(nn.Module):
             spk_emb = self.speaker_emb(speaker).unsqueeze(1)
             spk_emb.mul_(self.speaker_emb_weight)
 
+        if self.lang_emb is None:
+            lang_emb = 0
+        else:
+            language = torch.ones(inputs.size(0)).long().to(inputs.device) * language
+            lang_emb = self.lang_emb(language).unsqueeze(1)
+            lang_emb.mul_(self.lang_emb_weight)
+
         # Input FFT
-        enc_out, enc_mask = self.encoder(inputs, conditioning=spk_emb)
+        enc_out, enc_mask = self.encoder(inputs, conditioning=spk_emb + lang_emb)
 
         # Predict durations
         log_dur_pred = self.duration_predictor(enc_out, enc_mask)

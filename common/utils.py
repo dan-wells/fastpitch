@@ -52,9 +52,10 @@ def load_wav_to_torch(full_path, force_sampling_rate=None):
     return torch.FloatTensor(data.astype(np.float32)), sampling_rate
 
 
-def load_filepaths_and_text(dataset_path, fnames, has_speakers=False, delim="|"):
+def load_filepaths_and_text(dataset_path, fnames, delim="|"):
     data_fields = ['audio', 'pitch', 'duration']
-    fields = ['text', 'speaker'] + data_fields  # TODO: add fname here
+    cond_fields = ['speaker', 'language']
+    fields = data_fields + cond_fields + ['text']  # TODO: add fname here
     fpaths_and_text = []
     for fname in fnames:
         with open(fname, encoding='utf-8') as f:
