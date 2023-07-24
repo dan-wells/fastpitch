@@ -32,7 +32,7 @@ def load_meta(meta_in, spkr_sep='_'):
     speakers = set()
     with open(meta_in) as inf:
         for line in inf:
-            line = line.strip()
+            line = line.strip('\n')
             mels, *_ = line.split('|')
             utt_id = os.path.splitext(os.path.basename(mels))[0]
             metadata[utt_id] = line
