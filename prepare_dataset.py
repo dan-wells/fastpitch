@@ -49,6 +49,8 @@ def parse_args(parser):
                         type=str, help='Path to file with audio paths and text')
     parser.add_argument('--n-speakers', default=1, type=int,
                         help='Number of speakers labelled in data')
+    parser.add_argument('--n-langs', default=1, type=int,
+                        help='Number of languages labelled in data')
     parser.add_argument('--extract-mels', action=argparse.BooleanOptionalAction,
                         default=True, help='Save mel spectrograms to disk')
     parser.add_argument('--extract-durs', action=argparse.BooleanOptionalAction,
@@ -150,13 +152,14 @@ def main():
         fname_text = {}
         fname_pitch = {}
         fname_spkr = {}
+        fname_lang = {}
 
         load_mel_from_disk = False
         load_durs_from_disk = False
         load_pitch_from_disk = False
         dataset = TextMelAliLoader(
             args.dataset_path, filelist, args.text_cleaners, args.n_mel_channels,
-            args.input_type, args.symbol_set, args.n_speakers,
+            args.input_type, args.symbol_set, args.n_speakers, args.n_langs,
             load_mel_from_disk, load_durs_from_disk, load_pitch_from_disk,
             args.max_wav_value, args.sampling_rate,
             args.filter_length, args.hop_length, args.win_length,
@@ -170,10 +173,11 @@ def main():
 
         label = os.path.splitext(os.path.basename(filelist))[0]
         for i, batch in enumerate(tqdm(data_loader, label)):
-            text, mel, text_len, durations, pitch, speaker, fname = batch[0]
+            text, mel, text_len, durations, pitch, speaker, lang, fname = batch[0]
             fname_text[fname] = text
             fname_pitch[fname] = pitch
             fname_spkr[fname] = speaker
+            fname_lang[fname] = lang
 
             if args.extract_mels:
                 fpath = os.path.join(args.dataset_path, 'mels', fname + '.pt')
@@ -191,6 +195,7 @@ def main():
         mean, std = calculate_pitch_mean_std(fname_pitch)
         save_stats(args.dataset_path, filelist, 'pitches', mean, std)
 
+        # TODO: add lang
         if args.write_meta:
             if args.n_speakers > 1:
                 meta_header = 'audio|duration|pitch|text|speaker\n'
