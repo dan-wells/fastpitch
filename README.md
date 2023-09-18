@@ -253,6 +253,14 @@ e.g. for language in a multi-lingual model.
 To train using monotonic alignment search instead of passing explicit input
 symbol duration targets, pass `--use-mas`. 
 
+To predict mel spectrogram values using
+[trivariate-chain GMMs](https://www.isca-speech.org/archive/interspeech_2023/kogel23_interspeech.html),
+pass `--tvcgmm_k $K` to set the number of GMM components. Individual
+time/frequency bins will then be sampled from learned GMMs, mitigating
+over-smoothing in spectrogram prediction and subsequent vocoder artefacts.
+Depending on how much variance is in your data, you might start with values
+between `K=1` and `K=5` (the default value `0` disables TVC-GMM).
+
 To reduce model size with (probably) limited impact on performance, pass
 `--use-sepconv` to replace all convolutional layers with depthwise separable
 convolutions. Additional options are available for automatic mixed precision
@@ -315,7 +323,8 @@ models.
 
 If your model checkpoint uses depthwise separable convolutional layers, then
 also pass `--use-sepconv` to `inference.py`. Likewise, if trained with monotonic
-alignment search then pass `--use-mas` to match checkpoint model architecture.
+alignment search then pass `--use-mas`, or `--tvcgmm_k $K` if using TVC-GMM to
+match checkpoint model architectures.
 
 It should be possible to run any HiFi-GAN model checkpoint trained from the original
 repo, given an appropriate config file. We also have a

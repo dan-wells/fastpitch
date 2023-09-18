@@ -80,6 +80,7 @@ def get_model_config(model_name, args):
             # model-wide architecture
             use_sepconv=args.use_sepconv,
             use_mas=args.use_mas,
+            tvcgmm_k = args.tvcgmm_k,
             # input FFT
             in_fft_n_layers=args.in_fft_n_layers,
             in_fft_n_heads=args.in_fft_n_heads,

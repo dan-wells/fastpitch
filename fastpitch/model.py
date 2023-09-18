@@ -100,7 +100,7 @@ class TemporalPredictor(nn.Module):
 
 class FastPitch(nn.Module):
     def __init__(self, n_mel_channels, symbol_type, n_symbols, padding_idx,
-                 symbols_embedding_dim, use_sepconv, use_mas,
+                 symbols_embedding_dim, use_sepconv, use_mas, tvcgmm_k,
                  in_fft_n_layers, in_fft_n_heads, in_fft_d_head,
                  in_fft_conv1d_kernel_size, in_fft_conv1d_filter_size,
                  in_fft_sepconv, in_fft_output_size, in_fft_post_cond,
@@ -193,8 +193,14 @@ class FastPitch(nn.Module):
         # Store values precomputed for training data within the model
         self.register_buffer('pitch_mean', torch.zeros(1))
         self.register_buffer('pitch_std', torch.zeros(1))
+        self.n_mel_channels = n_mel_channels
 
-        self.proj = nn.Linear(out_fft_output_size, n_mel_channels, bias=True)
+        self.tvcgmm_k = tvcgmm_k
+        if tvcgmm_k:
+            # predict 3 bin means + 6 covariance values + 1 mixture weight per k
+            self.proj = nn.Linear(out_fft_output_size, n_mel_channels * tvcgmm_k * 10)
+        else:
+            self.proj = nn.Linear(out_fft_output_size, n_mel_channels)
 
         # For monotonic alignment search (see forward_mas)
         self.use_mas = use_mas

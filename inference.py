@@ -32,6 +32,8 @@ import sys
 import warnings
 
 import torch
+import torch.distributions as D
+import torch.nn.functional as F
 import numpy as np
 from scipy.stats import norm
 from scipy.io.wavfile import write
@@ -137,6 +139,7 @@ def load_model_from_ckpt(checkpoint_path, ema, model, device):
     status = ''
 
     if 'state_dict' in checkpoint_data:
+        # FastPitch checkpoint
         sd = checkpoint_data['state_dict']
         if ema and 'ema_state_dict' in checkpoint_data:
             sd = checkpoint_data['ema_state_dict']
@@ -379,6 +382,7 @@ def main():
                 if generator is not None:
                     b = batches[0]
                     mel, *_ = generator(b['text'])
+
                 if vocoder is not None:
                     audios = vocoder(mel)
 
@@ -410,6 +414,37 @@ def main():
                 gen_kw['language'] = b['language'] if 'language' in b else args.language
                 with torch.no_grad(), gen_measures:
                     mel, mel_lens, *_ = generator(b['text'], **gen_kw)
+
+                    if generator.tvcgmm_k:
+                        min_var = 1.0e-3
+                        n_mel = generator.n_mel_channels
+                        param_predictions = mel.transpose(1, 2).reshape(
+                             args.batch_size, -1, n_mel, generator.tvcgmm_k, 10)
+
+                        pis = F.softmax(param_predictions[..., 0], dim=-1)
+                        mus = param_predictions[..., 1:4]
+                        scale_trils = torch.diag_embed(
+                            F.softplus(param_predictions[..., 4:7]) + min_var, offset=0)
+                        scale_trils += torch.diag_embed(param_predictions[..., 7:9], offset=-1)
+                        scale_trils += torch.diag_embed(param_predictions[..., 9:10], offset=-2)
+                        sigmas = scale_trils @ scale_trils.transpose(-1, -2)
+                        # last frequency bin is erroneous in conditional sampling due to 
+                        # missing training targets
+                        sigmas[:, -1] = sigmas[:, -2]
+
+                        mix = D.Categorical(pis)
+                        comp = D.MultivariateNormal(mus, scale_tril=scale_trils)
+                        mixture = D.MixtureSameFamily(mix, comp)
+
+                        mel_pred = mixture.sample().transpose(2, 3)
+                        mel_pred = mel_pred.reshape(args.batch_size, -1, 240).transpose(1, 2)
+                        mel_pred[:, :n_mel, 1:] += mel_pred[:, n_mel:2 * n_mel, :-1]
+                        mel_pred[:, 1:n_mel, :] += mel_pred[:, 160:-1, :]
+                        mel_pred[:, 1:n_mel, 1:] /= 3
+                        mel_pred[:, 0, 1:] /= 2
+                        mel_pred[:, 1:, 0] /= 2
+                        mel_pred = mel_pred[:, :n_mel]
+                        mel = mel_pred
 
                 gen_infer_perf = mel.size(0) * mel.size(2) / gen_measures[-1]
                 all_letters += b['text_lens'].sum().item()

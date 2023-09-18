@@ -53,6 +53,9 @@ def parse_fastpitch_args(parent, add_help=False):
                       help='Use depthwise separable convolutions')
     arch.add_argument('--use-mas', action='store_true',
                       help='Train with monotonic alignment search')
+    arch.add_argument('--tvcgmm-k', default=0, type=int,
+                      help='Predict spectogram values using TVC-GMM with k '
+                      'mixtures (0 to disable, default)')
 
     in_fft = parser.add_argument_group('input FFT parameters')
     in_fft.add_argument('--in-fft-n-layers', default=6, type=int,

@@ -39,7 +39,9 @@ import librosa
 import numpy as np
 import torch
 import torch.distributed as dist
+import torch.distributions as D
 import torch.multiprocessing as mp
+import torch.nn.functional as F
 from torch.cuda.amp import autocast, GradScaler
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim import Adam
@@ -51,7 +53,7 @@ import common.tb_dllogger as logger
 import models
 from fastpitch.attn_loss_function import AttentionBinarizationLoss
 from fastpitch.data_function import batch_to_gpu, TextMelAliCollate, TextMelAliLoader
-from fastpitch.loss_function import FastPitchLoss, FastPitchMASLoss
+from fastpitch.loss_function import FastPitchLoss, FastPitchMASLoss, FastPitchTVCGMMLoss
 
 
 def parse_args(parser):
@@ -257,7 +259,8 @@ def load_vocoder(args, device):
 def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn,
              distributed_run, batch_to_gpu, use_gt_durations=False, ema=False,
              mas=False, attention_kl_loss=None, kl_weight=None,
-             vocoder=None, sampling_rate=22050, hop_length=256, audio_interval=5):
+             vocoder=None, sampling_rate=22050, hop_length=256, tvcgmm_k=0,
+             audio_interval=5):
     """Handles all the validation scoring and printing"""
     was_training = model.training
     model.eval()
@@ -301,6 +304,34 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
                                                    key=lambda x: len(valset.get_text(x['text'])),
                                                    reverse=True)
                 tb_fnames = [i['audio'] for i in batch_audiopaths_and_text]
+
+                if tvcgmm_k:
+                    mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred = y_pred
+                    mel_tgt, dur_tgt, dur_lens, pitch_tgt = y
+                    mel_tgt = mel_tgt.transpose(1, 2)
+                    min_var = 1.0e-3
+
+                    param_preds = mel_out.reshape(*mel_tgt.shape, tvcgmm_k, 10)
+                    scale_tril = torch.diag_embed(
+                        F.softplus(param_preds[..., 4:7]) + min_var, offset=0)
+                    scale_tril += torch.diag_embed(param_preds[..., 7:9], offset=-1)
+                    scale_tril += torch.diag_embed(param_preds[..., 9:10], offset=-2)
+
+                    mix = D.Categorical(F.softmax(param_preds[..., 0], dim=-1))
+                    comp = D.MultivariateNormal(param_preds[..., 1:4], scale_tril=scale_tril)
+                    mixture = D.MixtureSameFamily(mix, comp)
+
+                    n_mel = model.n_mel_channels
+                    mel_pred = mixture.sample().transpose(2, 3)
+                    mel_pred = mel_pred.reshape(batch_size, -1, 3 * n_mel).transpose(1, 2)
+                    mel_pred[:, :n_mel, 1:] += mel_pred[:, n_mel:2 * n_mel, :-1]
+                    mel_pred[:, 1:n_mel, :] += mel_pred[:, 2 * n_mel:-1, :]
+                    mel_pred[:, 1:n_mel, 1:] /= 3  # average overlapping bins
+                    mel_pred[:, 0, 1:] /= 2
+                    mel_pred[:, 1:, 0] /= 2
+                    mel_pred = mel_pred[:, :n_mel, :].transpose(1, 2)
+                    y_pred = (mel_pred, *y_pred[1:])  # it's a tuple...
+
                 plot_spectrograms(
                     y_pred, tb_fnames, total_iter, n=4, label='Predicted spectrogram', mas=mas)
                 if vocoder is not None:
@@ -534,6 +565,10 @@ def train(rank, args):
             pitch_predictor_loss_scale=args.pitch_predictor_loss_scale,
             attn_loss_scale=args.attn_loss_scale)
         attention_kl_loss = AttentionBinarizationLoss()  # L_bin
+    elif args.tvcgmm_k:
+        criterion = FastPitchTVCGMMLoss(k=args.tvcgmm_k, min_var=1.0e-3,
+            dur_predictor_loss_scale=args.dur_predictor_loss_scale,
+            pitch_predictor_loss_scale=args.pitch_predictor_loss_scale)
     else:
         criterion = FastPitchLoss(
             dur_predictor_loss_scale=args.dur_predictor_loss_scale,
@@ -749,14 +784,14 @@ def train(rank, args):
                  collate_fn, args.distributed_run, batch_to_gpu, use_gt_durations=True,
                  mas=args.use_mas, attention_kl_loss=attention_kl_loss, kl_weight=kl_weight,
                  vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length,
-                 audio_interval=args.audio_interval)
+                 tvcgmm_k=args.tvcgmm_k, audio_interval=args.audio_interval)
 
         if args.ema_decay > 0:
             validate(ema_model, epoch, total_iter, criterion, valset, args.batch_size,
                      collate_fn, args.distributed_run, batch_to_gpu, use_gt_durations=True, ema=True,
                      mas=args.use_mas, attention_kl_loss=attention_kl_loss, kl_weight=kl_weight,
                      vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length,
-                     audio_interval=args.audio_interval)
+                     tvcgmm_k=args.tvcgmm_k, audio_interval=args.audio_interval)
 
         maybe_save_checkpoint(args, model, ema_model, optimizer, scaler,
                               epoch, total_iter, model_config)
@@ -777,7 +812,8 @@ def train(rank, args):
     validate(model, None, total_iter, criterion, valset, args.batch_size,
              collate_fn, args.distributed_run, batch_to_gpu, use_gt_durations=True,
              mas=args.use_mas, attention_kl_loss=attention_kl_loss, kl_weight=kl_weight,
-             vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length)
+             vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length,
+             tvcgmm_k=args.tvcgmm_k)
 
 
 def main():
@@ -790,6 +826,11 @@ def main():
     args, unk_args = parser.parse_known_args()
     if len(unk_args) > 0:
         raise ValueError(f'Invalid options {unk_args}')
+
+    # TODO: refactor loss/forwards to support TVC-GMM under MAS
+    if args.use_mas and args.tvcgmm_k:
+        raise NotImplementedError(
+            'TVC-GMM prediction is not supported when training with MAS')
 
     if args.cuda:
         args.num_gpus = torch.cuda.device_count()
