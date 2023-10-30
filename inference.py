@@ -437,9 +437,9 @@ def main():
                         mixture = D.MixtureSameFamily(mix, comp)
 
                         mel_pred = mixture.sample().transpose(2, 3)
-                        mel_pred = mel_pred.reshape(args.batch_size, -1, 240).transpose(1, 2)
+                        mel_pred = mel_pred.reshape(args.batch_size, -1, 3 * n_mel).transpose(1, 2)
                         mel_pred[:, :n_mel, 1:] += mel_pred[:, n_mel:2 * n_mel, :-1]
-                        mel_pred[:, 1:n_mel, :] += mel_pred[:, 160:-1, :]
+                        mel_pred[:, 1:n_mel, :] += mel_pred[:, 2 * n_mel:-1, :]
                         mel_pred[:, 1:n_mel, 1:] /= 3
                         mel_pred[:, 0, 1:] /= 2
                         mel_pred[:, 1:, 0] /= 2
