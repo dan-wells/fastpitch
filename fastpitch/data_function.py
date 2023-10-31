@@ -507,13 +507,15 @@ class TextMelAliCollate():
         len_x = [x[2] for x in batch]
         len_x = torch.Tensor(len_x)
 
+        fnames = [batch[i][-1] for i in ids_sorted_decreasing]
+
         return (text_padded, input_lengths, mel_padded, output_lengths,
-                len_x, dur_padded, dur_lens, pitch_padded, speaker, lang)
+                len_x, dur_padded, dur_lens, pitch_padded, speaker, lang, fnames)
 
 
 def batch_to_gpu(batch, symbol_type='char', mas=False):
     text_padded, input_lengths, mel_padded, output_lengths, \
-        len_x, dur_padded, dur_lens, pitch_padded, speaker, lang = batch
+        len_x, dur_padded, dur_lens, pitch_padded, speaker, lang, fnames = batch
     if symbol_type == 'pf':
         text_padded = to_gpu(text_padded).float()
     else:

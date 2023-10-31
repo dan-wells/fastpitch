@@ -97,7 +97,7 @@ def parse_args(parser):
     opt.add_argument('--grad-clip-thresh', default=1000.0, type=float,
                      help='Clip threshold for gradients')
     opt.add_argument('-bs', '--batch-size', type=int, required=True,
-                     help='Batch size per GPU')
+                     help='Batch size (effective, after multi-GPU and gradient accumulation)')
     opt.add_argument('--warmup-steps', type=int, default=1000,
                      help='Number of steps for lr warmup')
     opt.add_argument('--dur-predictor-loss-scale', type=float, default=0.1,
@@ -259,8 +259,8 @@ def load_vocoder(args, device):
 def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn,
              distributed_run, batch_to_gpu, use_gt_durations=False, ema=False,
              mas=False, attention_kl_loss=None, kl_weight=None,
-             vocoder=None, sampling_rate=22050, hop_length=256, tvcgmm_k=0,
-             audio_interval=5):
+             vocoder=None, sampling_rate=22050, hop_length=256, n_mel=80,
+             tvcgmm_k=0, audio_interval=5):
     """Handles all the validation scoring and printing"""
     was_training = model.training
     model.eval()
@@ -298,12 +298,11 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
 
             # log spectrograms and generated audio for first few utterances
             if (i == 0) and (epoch % audio_interval == 0 if epoch is not None else True):
-                # TODO: sort utterances by mel length rather than more variable text length
-                # for consistent sample across different experiments
-                batch_audiopaths_and_text = sorted(valset.audiopaths_and_text[:batch_size],
-                                                   key=lambda x: len(valset.get_text(x['text'])),
-                                                   reverse=True)
-                tb_fnames = [i['audio'] for i in batch_audiopaths_and_text]
+                fnames = batch[-1]
+                tgt_mel_lens = y[2]
+                tgt_mel_lens_sorted_idx = [
+                    i for i, _ in sorted(enumerate(tgt_mel_lens), key=lambda x: x[1], reverse=True)]
+                tb_fnames = [fnames[i] for i in tgt_mel_lens_sorted_idx]
 
                 if tvcgmm_k:
                     mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred = y_pred
@@ -321,7 +320,6 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
                     comp = D.MultivariateNormal(param_preds[..., 1:4], scale_tril=scale_tril)
                     mixture = D.MixtureSameFamily(mix, comp)
 
-                    n_mel = model.n_mel_channels
                     mel_pred = mixture.sample().transpose(2, 3)
                     mel_pred = mel_pred.reshape(batch_size, -1, 3 * n_mel).transpose(1, 2)
                     mel_pred[:, :n_mel, 1:] += mel_pred[:, n_mel:2 * n_mel, :-1]
@@ -332,6 +330,16 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
                     mel_pred = mel_pred[:, :n_mel, :].transpose(1, 2)
                     y_pred = (mel_pred, *y_pred[1:])  # it's a tuple...
 
+                if epoch == audio_interval:
+                    # plot ref and copy synthesis only on first epoch
+                    plot_spectrograms(
+                        y, tb_fnames, total_iter, n=4, label='Reference spectrogram', mas=mas)
+                    if vocoder is not None:
+                        generate_audio(y, tb_fnames, total_iter, vocoder, sampling_rate,
+                                       hop_length, n=4, label='Reference audio', mas=mas,
+                                       dataset_path=valset.dataset_path)
+                        generate_audio(y, tb_fnames, total_iter, vocoder, sampling_rate,
+                                       hop_length, n=4, label='Copy synthesis', mas=mas)
                 plot_spectrograms(
                     y_pred, tb_fnames, total_iter, n=4, label='Predicted spectrogram', mas=mas)
                 if vocoder is not None:
@@ -414,7 +422,7 @@ def plot_spectrograms(y, fnames, step, n=4, label='Predicted spectrogram', mas=F
 
 
 def generate_audio(y, fnames, step, vocoder=None, sampling_rate=22050, hop_length=256,
-                   n=4, label='Predicted audio', mas=False):
+                   n=4, label='Predicted audio', mas=False, dataset_path=''):
     """Generate audio from spectrograms for n utterances in batch"""
     bs = len(fnames)
     n = min(n, bs)
@@ -435,7 +443,7 @@ def generate_audio(y, fnames, step, vocoder=None, sampling_rate=22050, hop_lengt
         elif label == 'Reference audio':
             audios = []
             for fname in fnames:
-                wav = re.sub(r'mels/(.+)\.pt', r'wavs/\1.wav', fname)
+                wav = os.path.join(dataset_path, 'wavs/{}.wav'.format(fname))
                 audio, _ = librosa.load(wav, sr=sampling_rate)
                 audios.append(audio)
             if mas:
@@ -445,9 +453,8 @@ def generate_audio(y, fnames, step, vocoder=None, sampling_rate=22050, hop_lengt
     for audio, mel_len, fname in zip(audios, mel_lens, fnames):
         audio = audio[:mel_len * hop_length]
         audio = audio / np.max(np.abs(audio))
-        utt_id = os.path.splitext(os.path.basename(fname))[0]
         logger.log_audio_tb(
-            step, '{}/{}'.format(label, utt_id), audio, sampling_rate, tb_subset='val')
+            step, '{}/{}'.format(label, fname), audio, sampling_rate, tb_subset='val')
 
 
 def plot_attn_maps(y, fnames, step, n=4, label='Predicted alignment'):
@@ -559,6 +566,8 @@ def train(rank, args):
     start_epoch = start_epoch[0]
     total_iter = start_iter[0]
 
+    kl_weight = None
+    attention_kl_loss = None  # for validation
     if args.use_mas:
         criterion = FastPitchMASLoss(
             dur_predictor_loss_scale=args.dur_predictor_loss_scale,
@@ -573,8 +582,6 @@ def train(rank, args):
         criterion = FastPitchLoss(
             dur_predictor_loss_scale=args.dur_predictor_loss_scale,
             pitch_predictor_loss_scale=args.pitch_predictor_loss_scale)
-        attention_kl_loss = None  # for validation
-        kl_weight = None
 
     trainset = TextMelAliLoader(audiopaths_and_text=args.training_files, **vars(args))
     valset = TextMelAliLoader(audiopaths_and_text=args.validation_files, **vars(args))
@@ -587,37 +594,14 @@ def train(rank, args):
     else:
         train_sampler, shuffle = None, True
 
-    train_loader = DataLoader(trainset, num_workers=4, shuffle=shuffle,
-                              sampler=train_sampler, batch_size=args.batch_size,
-                              pin_memory=False, drop_last=True,
-                              collate_fn=collate_fn)
+    train_loader = DataLoader(
+        trainset, num_workers=4, shuffle=shuffle, sampler=train_sampler,
+        batch_size=int(args.batch_size / args.grad_accumulation),
+        pin_memory=False, drop_last=True, collate_fn=collate_fn)
 
     vocoder = None
     if args.hifigan:
         vocoder = load_vocoder(args, device)
-
-    # log spectrograms and generated audio for first few validation utterances
-    val_sampler = DistributedSampler(valset) if args.distributed_run else None
-    val_loader = DataLoader(valset, num_workers=4, shuffle=False,
-                            sampler=val_sampler, batch_size=args.batch_size,
-                            pin_memory=False, collate_fn=collate_fn)
-    for i, batch in enumerate(val_loader):
-        if i > 0:
-            break
-        _, y, _ = batch_to_gpu(batch, collate_fn.symbol_type, mas=args.use_mas)
-        # TODO: sort utterances by mel length rather than more variable text length
-        # for consistent sample across different experiments
-        batch_audiopaths_and_text = sorted(valset.audiopaths_and_text[:args.batch_size],
-                                           key=lambda x: len(valset.get_text(x['text'])),
-                                           reverse=True)
-        tb_fnames = [i['audio'] for i in batch_audiopaths_and_text]
-        plot_spectrograms(
-            y, tb_fnames, total_iter, n=4, label='Reference spectrogram', mas=args.use_mas)
-        if vocoder is not None:
-            generate_audio(y, tb_fnames, total_iter, vocoder, args.sampling_rate,
-                           args.hop_length, n=4, label='Reference audio', mas=args.use_mas)
-            generate_audio(y, tb_fnames, total_iter, vocoder, args.sampling_rate,
-                           args.hop_length, n=4, label='Copy synthesis', mas=args.use_mas)
 
     model.train()
 
@@ -781,17 +765,17 @@ def train(rank, args):
         )
 
         validate(model, epoch, total_iter, criterion, valset, args.batch_size,
-                 collate_fn, args.distributed_run, batch_to_gpu, use_gt_durations=True,
-                 mas=args.use_mas, attention_kl_loss=attention_kl_loss, kl_weight=kl_weight,
-                 vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length,
-                 tvcgmm_k=args.tvcgmm_k, audio_interval=args.audio_interval)
+            collate_fn, args.distributed_run, batch_to_gpu, use_gt_durations=True,
+            mas=args.use_mas, attention_kl_loss=attention_kl_loss, kl_weight=kl_weight,
+            vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length,
+            n_mel=args.n_mel_channels, tvcgmm_k=args.tvcgmm_k, audio_interval=args.audio_interval)
 
         if args.ema_decay > 0:
             validate(ema_model, epoch, total_iter, criterion, valset, args.batch_size,
-                     collate_fn, args.distributed_run, batch_to_gpu, use_gt_durations=True, ema=True,
-                     mas=args.use_mas, attention_kl_loss=attention_kl_loss, kl_weight=kl_weight,
-                     vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length,
-                     tvcgmm_k=args.tvcgmm_k, audio_interval=args.audio_interval)
+                collate_fn, args.distributed_run, batch_to_gpu, use_gt_durations=True, ema=True,
+                mas=args.use_mas, attention_kl_loss=attention_kl_loss, kl_weight=kl_weight,
+                vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length,
+                n_mel=args.n_mel_channels, tvcgmm_k=args.tvcgmm_k, audio_interval=args.audio_interval)
 
         maybe_save_checkpoint(args, model, ema_model, optimizer, scaler,
                               epoch, total_iter, model_config)
@@ -810,10 +794,10 @@ def train(rank, args):
                epoch_time
     )
     validate(model, None, total_iter, criterion, valset, args.batch_size,
-             collate_fn, args.distributed_run, batch_to_gpu, use_gt_durations=True,
-             mas=args.use_mas, attention_kl_loss=attention_kl_loss, kl_weight=kl_weight,
-             vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length,
-             tvcgmm_k=args.tvcgmm_k)
+        collate_fn, args.distributed_run, batch_to_gpu, use_gt_durations=True,
+        mas=args.use_mas, attention_kl_loss=attention_kl_loss, kl_weight=kl_weight,
+        vocoder=vocoder, sampling_rate=args.sampling_rate, hop_length=args.hop_length,
+        n_mel=args.n_mel_channels, tvcgmm_k=args.tvcgmm_k)
 
 
 def main():
