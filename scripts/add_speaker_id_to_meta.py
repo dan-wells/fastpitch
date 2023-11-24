@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import argparse
+import csv
 import os
 import random
 
@@ -31,21 +32,26 @@ def load_meta(meta_in, spkr_sep='_'):
     metadata = {}
     speakers = set()
     with open(meta_in) as inf:
-        for line in inf:
-            line = line.strip('\n')
-            mels, *_ = line.split('|')
-            utt_id = os.path.splitext(os.path.basename(mels))[0]
-            metadata[utt_id] = line
-            spkr = utt_id.split(spkr_sep)[0]
-            speakers.add(spkr)
-    return metadata, speakers
+        meta_csv = csv.DictReader(inf, delimiter='|')
+        for row in meta_csv:
+            utt_id = os.path.splitext(os.path.basename(row['audio']))[0]
+            if 'speaker' not in row:
+                row['speaker'] = utt_id.split(spkr_sep)[0]
+            speakers.add(row['speaker'])
+            metadata[utt_id] = row
+        if 'speaker' not in meta_csv.fieldnames:
+            meta_csv.fieldnames.append('speaker')
+    return metadata, speakers, meta_csv.fieldnames
 
 
-def write_meta(meta_out, metadata, utts, speaker_ids, spkr_sep='_'):
+def write_meta(meta_out, metadata, speaker_ids, fieldnames):
     with open(meta_out, 'w') as outf:
-        for utt in utts:
-            spkr = utt.split(spkr_sep)[0]
-            outf.write("{}|{}\n".format(metadata[utt], speaker_ids[spkr]))
+        meta_writer = csv.DictWriter(
+            outf, fieldnames=fieldnames, delimiter='|', extrasaction='ignore')
+        meta_writer.writeheader()
+        for utt, row in metadata.items():
+            row['speaker'] = speaker_ids[row['speaker']]
+            meta_writer.writerow(row)
 
 
 def assign_speaker_ids(speakers, n_spkrs=0):
@@ -85,7 +91,7 @@ def write_speaker_list(speakers_out, speaker_ids):
 if __name__ == '__main__':
     args = parse_args()
 
-    metadata, speakers = load_meta(args.meta_in, args.spkr_sep)
+    metadata, speakers, fieldnames = load_meta(args.meta_in, args.spkr_sep)
     if os.path.isfile(args.spkr_list):
         # TODO: account for the case where spkr_list represents a subset
         # of speakers in meta_in, i.e. we maintain those we see again and
@@ -100,4 +106,4 @@ if __name__ == '__main__':
         random.seed(args.seed)
         random.shuffle(utts)
 
-    write_meta(args.meta_out, metadata, utts, speaker_ids, args.spkr_sep)
+    write_meta(args.meta_out, metadata, speaker_ids, fieldnames)
