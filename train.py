@@ -445,19 +445,16 @@ def generate_audio(y, fnames, sorted_idx, step, vocoder=None, sampling_rate=2205
             # y: mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred
             audios = vocoder(y[0][idx].transpose(1, 2)).cpu().squeeze().numpy()
             mel_lens = y[1][idx].squeeze().cpu().numpy().sum(axis=1) - 1
-        elif label == 'Copy synthesis':
+        else:
             # y: mel_padded, dur_padded, dur_lens, pitch_padded
-            audios = vocoder(y[0][idx]).cpu().squeeze().numpy()
-            if mas:
-                mel_lens = y[2][idx].cpu().numpy()  # output_lengths
-            else:
-                mel_lens = y[1][idx].cpu().numpy().sum(axis=1) - 1
-        elif label == 'Reference audio':
-            audios = []
-            for fname in fnames:
-                wav = os.path.join(dataset_path, 'wavs/{}.wav'.format(fname))
-                audio, _ = librosa.load(wav, sr=sampling_rate)
-                audios.append(audio)
+            if label == 'Copy synthesis':
+                audios = vocoder(y[0][idx]).cpu().squeeze().numpy()
+            elif label == 'Reference audio':
+                audios = []
+                for fname in fnames:
+                    wav = os.path.join(dataset_path, 'wavs/{}.wav'.format(fname))
+                    audio, _ = librosa.load(wav, sr=sampling_rate)
+                    audios.append(audio)
             if mas:
                 mel_lens = y[2][idx].cpu().numpy()  # output_lengths
             else:
