@@ -53,6 +53,12 @@ def collapse_whitespace(text):
     return re.sub(_whitespace_re, ' ', text)
 
 
+def surround_with_spaces(text):
+    # add leading and trailing space to text transcript, e.g. to
+    # represent silences if not referencing forced alignments
+    return ' ' + text + ' '
+
+
 def separate_acronyms(text):
     text = re.sub(r"([0-9]+)([a-zA-Z]+)", r"\1 \2", text)
     text = re.sub(r"([a-zA-Z]+)([0-9]+)", r"\1 \2", text)

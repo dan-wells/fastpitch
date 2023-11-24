@@ -93,13 +93,11 @@ class UnitProcessor(object):
 
 
 # TODO: work out best defaults and neatest interface to set handle_sil,
-# add_spaces and skip_spaces here (should they just go through cleaner_names?)
+# and skip_spaces here (should they just go through cleaner_names?)
 class TextProcessor(object):
-    def __init__(self, symbol_set, cleaner_names, handle_sil=False,
-                 add_spaces=False, skip_spaces=False):
+    def __init__(self, symbol_set, cleaner_names, handle_sil=False, skip_spaces=False):
         self.symbols = get_symbols(symbol_set)
         self.cleaner_names = cleaner_names
-        self.add_spaces = add_spaces
         self.skip_spaces = skip_spaces
         self.handle_sil = handle_sil
         self.sil_symbols = ['sil', 'sp', 'spn']
@@ -160,10 +158,6 @@ class TextProcessor(object):
         # durations -- might need to skip spaces here
         if self.handle_sil:
             text = self.split_with_sil(text)
-        # add leading and trailing space to text transcript, e.g. to
-        # represent silences if not referencing forced alignments
-        if self.add_spaces:
-            text = ' ' + text + ' '
         # match character-level TextGrids which don't align spaces
         if self.skip_spaces:
             text = [i for i in text if i != ' ']
