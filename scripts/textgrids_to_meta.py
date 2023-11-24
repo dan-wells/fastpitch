@@ -39,7 +39,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     with open(args.meta_out, 'w') as outf:
-        tg_files = glob.glob(os.path.join(args.textgrid_dir, '*.TextGrid'))
+        outf.write('audio|text\n')
+        tg_files = sorted(glob.glob(os.path.join(args.textgrid_dir, '*.TextGrid')))
         for tgf in tqdm.tqdm(tg_files):
             try:
                 textgrid = tgt.io.read_textgrid(tgf, include_empty_intervals=True)
