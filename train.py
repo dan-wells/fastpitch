@@ -299,10 +299,13 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
             # log spectrograms and generated audio for first few utterances
             if (i == 0) and (epoch % audio_interval == 0 if epoch is not None else True):
                 fnames = batch[-1]
-                tgt_mel_lens = y[2]
+                # reorder utterances by mel length
+                if mas:
+                    tgt_mel_lens = y[2]
+                else:
+                    tgt_mel_lens = y[1].sum(axis=1)
                 tgt_mel_lens_sorted_idx = [
                     i for i, _ in sorted(enumerate(tgt_mel_lens), key=lambda x: x[1], reverse=True)]
-                tb_fnames = [fnames[i] for i in tgt_mel_lens_sorted_idx]
 
                 if tvcgmm_k:
                     mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred = y_pred
@@ -333,20 +336,27 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
                 if epoch == audio_interval:
                     # plot ref and copy synthesis only on first epoch
                     plot_spectrograms(
-                        y, tb_fnames, total_iter, n=4, label='Reference spectrogram', mas=mas)
+                        y, fnames, tgt_mel_lens_sorted_idx, total_iter,
+                        n=4, label='Reference spectrogram', mas=mas)
                     if vocoder is not None:
-                        generate_audio(y, tb_fnames, total_iter, vocoder, sampling_rate,
-                                       hop_length, n=4, label='Reference audio', mas=mas,
+                        generate_audio(y, fnames, tgt_mel_lens_sorted_idx, total_iter,
+                                       vocoder, sampling_rate, hop_length,
+                                       n=4, label='Reference audio', mas=mas,
                                        dataset_path=valset.dataset_path)
-                        generate_audio(y, tb_fnames, total_iter, vocoder, sampling_rate,
-                                       hop_length, n=4, label='Copy synthesis', mas=mas)
+                        generate_audio(y, fnames, tgt_mel_lens_sorted_idx, total_iter,
+                                       vocoder, sampling_rate, hop_length,
+                                       n=4, label='Copy synthesis', mas=mas)
                 plot_spectrograms(
-                    y_pred, tb_fnames, total_iter, n=4, label='Predicted spectrogram', mas=mas)
+                    y_pred, fnames, tgt_mel_lens_sorted_idx, total_iter,
+                    n=4, label='Predicted spectrogram', mas=mas)
                 if vocoder is not None:
-                    generate_audio(y_pred, tb_fnames, total_iter, vocoder, sampling_rate,
-                                   hop_length, n=4, label='Predicted audio', mas=mas)
+                    generate_audio(y_pred, fnames, tgt_mel_lens_sorted_idx, total_iter,
+                                   vocoder, sampling_rate, hop_length, n=4,
+                                   label='Predicted audio', mas=mas)
                 if mas:
-                    plot_attn_maps(y_pred, tb_fnames, total_iter, n=4, label='Predicted alignment')
+                    plot_attn_maps(
+                        y_pred, fnames, tgt_mel_lens_sorted_idx, total_iter,
+                        n=4, label='Predicted alignment')
 
         val_meta = {k: v / len(valset) for k, v in val_meta.items()}
 
@@ -397,23 +407,24 @@ def log_stdout(logger, subset, epoch_iters, total_steps, loss, mel_loss,
     )
 
 
-def plot_spectrograms(y, fnames, step, n=4, label='Predicted spectrogram', mas=False):
+def plot_spectrograms(y, fnames, sorted_idx, step, n=4, label='Predicted spectrogram', mas=False):
     """Plot spectrograms for n utterances in batch"""
     bs = len(fnames)
     n = min(n, bs)
     s = bs // n
-    fnames = fnames[::s]
+    idx = sorted_idx[::s]
+    fnames = [fnames[i] for i in idx]
     if label == 'Predicted spectrogram':
         # y: mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred
-        mel_specs = y[0][::s].transpose(1, 2).cpu().numpy()
-        mel_lens = y[1][::s].squeeze().cpu().numpy().sum(axis=1) - 1
+        mel_specs = y[0][idx].transpose(1, 2).cpu().numpy()
+        mel_lens = y[1][idx].squeeze().cpu().numpy().sum(axis=1) - 1
     elif label == 'Reference spectrogram':
         # y: mel_padded, dur_padded, dur_lens, pitch_padded
-        mel_specs = y[0][::s].cpu().numpy()
+        mel_specs = y[0][idx].cpu().numpy()
         if mas:
-            mel_lens = y[2][::s].cpu().numpy()  # output_lengths
+            mel_lens = y[2][idx].cpu().numpy()  # output_lengths
         else:
-            mel_lens = y[1][::s].cpu().numpy().sum(axis=1) - 1
+            mel_lens = y[1][idx].cpu().numpy().sum(axis=1) - 1
     for mel_spec, mel_len, fname in zip(mel_specs, mel_lens, fnames):
         mel_spec = mel_spec[:, :mel_len]
         utt_id = os.path.splitext(os.path.basename(fname))[0]
@@ -421,25 +432,26 @@ def plot_spectrograms(y, fnames, step, n=4, label='Predicted spectrogram', mas=F
             step, '{}/{}'.format(label, utt_id), mel_spec, tb_subset='val')
 
 
-def generate_audio(y, fnames, step, vocoder=None, sampling_rate=22050, hop_length=256,
+def generate_audio(y, fnames, sorted_idx, step, vocoder=None, sampling_rate=22050, hop_length=256,
                    n=4, label='Predicted audio', mas=False, dataset_path=''):
     """Generate audio from spectrograms for n utterances in batch"""
     bs = len(fnames)
     n = min(n, bs)
     s = bs // n
-    fnames = fnames[::s]
+    idx = sorted_idx[::s]
+    fnames = [fnames[i] for i in idx]
     with torch.no_grad():
         if label == 'Predicted audio':
             # y: mel_out, dec_mask, dur_pred, log_dur_pred, pitch_pred
-            audios = vocoder(y[0][::s].transpose(1, 2)).cpu().squeeze().numpy()
-            mel_lens = y[1][::s].squeeze().cpu().numpy().sum(axis=1) - 1
+            audios = vocoder(y[0][idx].transpose(1, 2)).cpu().squeeze().numpy()
+            mel_lens = y[1][idx].squeeze().cpu().numpy().sum(axis=1) - 1
         elif label == 'Copy synthesis':
             # y: mel_padded, dur_padded, dur_lens, pitch_padded
-            audios = vocoder(y[0][::s]).cpu().squeeze().numpy()
+            audios = vocoder(y[0][idx]).cpu().squeeze().numpy()
             if mas:
-                mel_lens = y[2][::s].cpu().numpy()  # output_lengths
+                mel_lens = y[2][idx].cpu().numpy()  # output_lengths
             else:
-                mel_lens = y[1][::s].cpu().numpy().sum(axis=1) - 1
+                mel_lens = y[1][idx].cpu().numpy().sum(axis=1) - 1
         elif label == 'Reference audio':
             audios = []
             for fname in fnames:
@@ -447,9 +459,9 @@ def generate_audio(y, fnames, step, vocoder=None, sampling_rate=22050, hop_lengt
                 audio, _ = librosa.load(wav, sr=sampling_rate)
                 audios.append(audio)
             if mas:
-                mel_lens = y[2][::s].cpu().numpy()  # output_lengths
+                mel_lens = y[2][idx].cpu().numpy()  # output_lengths
             else:
-                mel_lens = y[1][::s].cpu().numpy().sum(axis=1) - 1
+                mel_lens = y[1][idx].cpu().numpy().sum(axis=1) - 1
     for audio, mel_len, fname in zip(audios, mel_lens, fnames):
         audio = audio[:mel_len * hop_length]
         audio = audio / np.max(np.abs(audio))
@@ -457,17 +469,18 @@ def generate_audio(y, fnames, step, vocoder=None, sampling_rate=22050, hop_lengt
             step, '{}/{}'.format(label, fname), audio, sampling_rate, tb_subset='val')
 
 
-def plot_attn_maps(y, fnames, step, n=4, label='Predicted alignment'):
+def plot_attn_maps(y, fnames, sorted_idx, step, n=4, label='Predicted alignment'):
     bs = len(fnames)
     n = min(n, bs)
     s = bs // n
-    fnames = fnames[::s]
+    idx = sorted_idx[::s]
+    fnames = [fnames[i] for i in idx]
     _, dec_mask, *_, attn_softs, attn_hards, attn_hard_durs, _ = y
-    attn_softs = attn_softs[::s].cpu().numpy()
-    attn_hards = attn_hards[::s].cpu().numpy()
-    attn_hard_durs = attn_hard_durs[::s].cpu().numpy()
+    attn_softs = attn_softs[idx].cpu().numpy()
+    attn_hards = attn_hards[idx].cpu().numpy()
+    attn_hard_durs = attn_hard_durs[idx].cpu().numpy()
     text_lens = np.count_nonzero(attn_hard_durs, 1)
-    mel_lens = dec_mask[::s].cpu().numpy().squeeze(2).sum(1)
+    mel_lens = dec_mask[idx].cpu().numpy().squeeze(2).sum(1)
     for attn_soft, attn_hard, mel_len, text_len, fname in zip(
             attn_softs, attn_hards, mel_lens, text_lens, fnames):
         attn_soft = attn_soft[:,:mel_len,:text_len].squeeze(0).transpose()
