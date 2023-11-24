@@ -439,6 +439,7 @@ class TextMelAliCollate():
             torch.LongTensor([len(x[0]) for x in batch]),
             dim=0, descending=True)
         max_input_len = input_lengths[0]
+        fnames = [batch[i][-1] for i in ids_sorted_decreasing]
 
         if self.symbol_type == 'pf':
             text_padded = torch.FloatTensor(len(batch), max_input_len, self.n_symbols)
@@ -477,7 +478,8 @@ class TextMelAliCollate():
                 dur = batch[ids_sorted_decreasing[i]][3]
                 dur_padded[i, :dur.shape[0]] = dur
                 dur_lens[i] = dur.shape[0]
-                assert dur_lens[i] == input_lengths[i]
+                assert dur_lens[i] == input_lengths[i], \
+                    f"{fnames[i]}, {dur_lens[i]}, {input_lengths[i]}"
 
         if self.mas:
             pitch_padded = torch.zeros(
@@ -506,8 +508,6 @@ class TextMelAliCollate():
         # count number of items - characters in text
         len_x = [x[2] for x in batch]
         len_x = torch.Tensor(len_x)
-
-        fnames = [batch[i][-1] for i in ids_sorted_decreasing]
 
         return (text_padded, input_lengths, mel_padded, output_lengths,
                 len_x, dur_padded, dur_lens, pitch_padded, speaker, lang, fnames)
