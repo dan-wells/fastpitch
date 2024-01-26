@@ -70,8 +70,6 @@ def parse_fastpitch_args(parent, add_help=False):
                         help='Use depthwise separable convolutions')
     in_fft.add_argument('--in-fft-output-size', default=384, type=int,
                         help='Output dim')
-    in_fft.add_argument('--in-fft-post-cond', action='store_true',
-                        help='Add conditioning after FFT blocks')
     in_fft.add_argument('--p-in-fft-dropout', default=0.1, type=float,
                         help='Dropout probability')
     in_fft.add_argument('--p-in-fft-dropatt', default=0.1, type=float,
@@ -130,9 +128,13 @@ def parse_fastpitch_args(parent, add_help=False):
                       help='Pitch embedding conv-1D kernel size')
     cond.add_argument('--pitch-embedding-sepconv', action='store_true',
                       help='Use depthwise separable convolutions')
-    cond.add_argument('--speaker-emb-weight', type=float, default=1.0,
+    cond.add_argument('--speaker-emb-dim', default=384, type=int,
+                      help='Speaker embedding dim')
+    cond.add_argument('--speaker-emb-weight', default=1.0, type=float,
                       help='Scale speaker embedding')
-    cond.add_argument('--lang-emb-weight', type=float, default=1.0,
+    cond.add_argument('--lang-emb-dim', default=384, type=int,
+                      help='Speaker embedding dim')
+    cond.add_argument('--lang-emb-weight', default=1.0, type=float,
                       help='Scale language embedding')
 
     return parser

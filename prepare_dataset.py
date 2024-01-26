@@ -26,6 +26,7 @@
 # *****************************************************************************
 
 import argparse
+import csv
 import json
 import os
 
@@ -47,10 +48,6 @@ def parse_args(parser):
                         default='./', help='Path to dataset')
     parser.add_argument('--wav-text-filelists', required=True, nargs='+',
                         type=str, help='Path to file with audio paths and text')
-    parser.add_argument('--n-speakers', default=1, type=int,
-                        help='Number of speakers labelled in data')
-    parser.add_argument('--n-langs', default=1, type=int,
-                        help='Number of languages labelled in data')
     parser.add_argument('--extract-mels', action=argparse.BooleanOptionalAction,
                         default=True, help='Save mel spectrograms to disk')
     parser.add_argument('--extract-durs', action=argparse.BooleanOptionalAction,
@@ -155,11 +152,13 @@ def main():
         fname_lang = {}
 
         load_mel_from_disk = False
+        speaker_ids = None
+        lang_ids = None
         load_durs_from_disk = False
         load_pitch_from_disk = False
         dataset = TextMelAliLoader(
             args.dataset_path, filelist, args.text_cleaners, args.n_mel_channels,
-            args.input_type, args.symbol_set, args.n_speakers, args.n_langs,
+            args.input_type, args.symbol_set, speaker_ids, lang_ids,
             load_mel_from_disk, load_durs_from_disk, load_pitch_from_disk,
             args.max_wav_value, args.sampling_rate,
             args.filter_length, args.hop_length, args.win_length,
@@ -195,19 +194,28 @@ def main():
         mean, std = calculate_pitch_mean_std(fname_pitch)
         save_stats(args.dataset_path, filelist, 'pitches', mean, std)
 
-        # TODO: add lang
         if args.write_meta:
-            if args.n_speakers > 1:
-                meta_header = 'audio|duration|pitch|text|speaker\n'
-                meta_line = 'mels/{0}.pt|durations/{0}.pt|pitches/{0}.pt|{1}|{2}\n'
-            else:
-                meta_header = 'audio|duration|pitch|text\n'
-                meta_line = 'mels/{0}.pt|durations/{0}.pt|pitches/{0}.pt|{1}\n'
+            meta_fields = ['audio', 'duration', 'pitch', 'text']
+            if None not in fname_spkr.values():
+                meta_fields.append('speaker')
+            if None not in fname_lang.values():
+                meta_fields.append('language')
+
             meta_file = os.path.join(args.dataset_path, label + '.meta.txt')
             with open(meta_file, 'w') as meta_out:
-                meta_out.write(meta_header)
+                meta_csv = csv.DictWriter(
+                    meta_out, fieldnames=meta_fields, extrasaction='ignore', delimiter='|')
+                meta_csv.writeheader()
                 for fname, text in fname_text.items():
-                    meta_out.write(meta_line.format(fname, text, fname_spkr[fname]))
+                    meta_row = {
+                        'audio': os.path.join('mels', fname + '.pt'),
+                        'duration': os.path.join('durations', fname + '.pt'),
+                        'pitch': os.path.join('pitches', fname + '.pt'),
+                        'text': text,
+                        'speaker': fname_spkr[fname],
+                        'language': fname_lang[fname],
+                    }
+                    meta_csv.writerow(meta_row)
     DLLogger.flush()
 
 

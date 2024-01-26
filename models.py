@@ -33,6 +33,7 @@ from os.path import abspath, dirname
 import torch
 
 from common.text.symbols import get_symbols, get_pad_idx
+from common.utils import load_speaker_lang_ids
 from fastpitch.model import FastPitch
 from hifigan import AttrDict
 from hifigan.model import Generator as HiFiGanGenerator
@@ -89,7 +90,6 @@ def get_model_config(model_name, args):
             in_fft_conv1d_filter_size=args.in_fft_conv1d_filter_size,
             in_fft_sepconv=args.in_fft_sepconv,
             in_fft_output_size=args.in_fft_output_size,
-            in_fft_post_cond=args.in_fft_post_cond,
             p_in_fft_dropout=args.p_in_fft_dropout,
             p_in_fft_dropatt=args.p_in_fft_dropatt,
             p_in_fft_dropemb=args.p_in_fft_dropemb,
@@ -120,9 +120,11 @@ def get_model_config(model_name, args):
             pitch_embedding_kernel_size=args.pitch_embedding_kernel_size,
             pitch_embedding_sepconv=args.pitch_embedding_sepconv,
             # speakers parameters
-            n_speakers=args.n_speakers,
+            speaker_ids=load_speaker_lang_ids(args.speaker_ids),
+            speaker_emb_dim=args.speaker_emb_dim,
             speaker_emb_weight=args.speaker_emb_weight,
-            n_langs=args.n_langs,
+            lang_ids=load_speaker_lang_ids(args.lang_ids),
+            lang_emb_dim=args.lang_emb_dim,
             lang_emb_weight=args.lang_emb_weight
         )
         return model_config

@@ -103,7 +103,7 @@ class FastPitch(nn.Module):
                  symbols_embedding_dim, use_sepconv, use_mas, tvcgmm_k,
                  in_fft_n_layers, in_fft_n_heads, in_fft_d_head,
                  in_fft_conv1d_kernel_size, in_fft_conv1d_filter_size,
-                 in_fft_sepconv, in_fft_output_size, in_fft_post_cond,
+                 in_fft_sepconv, in_fft_output_size,
                  p_in_fft_dropout, p_in_fft_dropatt, p_in_fft_dropemb,
                  out_fft_n_layers, out_fft_n_heads, out_fft_d_head,
                  out_fft_conv1d_kernel_size, out_fft_conv1d_filter_size,
@@ -116,7 +116,8 @@ class FastPitch(nn.Module):
                  pitch_predictor_sepconv, p_pitch_predictor_dropout,
                  pitch_predictor_n_layers,
                  pitch_embedding_kernel_size, pitch_embedding_sepconv,
-                 n_speakers, speaker_emb_weight, n_langs, lang_emb_weight):
+                 speaker_ids, speaker_emb_dim, speaker_emb_weight,
+                 lang_ids, lang_emb_dim, lang_emb_weight):
         super(FastPitch, self).__init__()
 
         self.encoder = FFTransformer(
@@ -134,17 +135,23 @@ class FastPitch(nn.Module):
             padding_idx=padding_idx,
             input_type=symbol_type,
             sepconv=in_fft_sepconv or use_sepconv,
-            post_cond=in_fft_post_cond
         )
 
-        if n_speakers > 1:
-            self.speaker_emb = nn.Embedding(n_speakers, symbols_embedding_dim)
+        self.speaker_ids = speaker_ids
+        if self.speaker_ids is not None:
+            self.speaker_emb = nn.Embedding(len(self.speaker_ids), symbols_embedding_dim)
+        elif speaker_emb_dim != symbols_embedding_dim:
+            # TODO: should we project even if embedding dims match?
+            self.speaker_emb = nn.Linear(speaker_emb_dim, symbols_embedding_dim, bias=False)
         else:
             self.speaker_emb = None
         self.speaker_emb_weight = speaker_emb_weight
 
-        if n_langs > 1:
-            self.lang_emb = nn.Embedding(n_langs, symbols_embedding_dim)
+        self.lang_ids = lang_ids
+        if self.lang_ids is not None:
+            self.lang_emb = nn.Embedding(len(self.lang_ids), symbols_embedding_dim)
+        elif lang_emb_dim != symbols_embedding_dim:
+            self.lang_emb = nn.Linear(lang_emb_dim, symbols_embedding_dim, bias=False)
         else:
             self.lang_emb = None
         self.lang_emb_weight = lang_emb_weight
@@ -238,19 +245,19 @@ class FastPitch(nn.Module):
 
         # Calculate speaker embedding
         if self.speaker_emb is None:
-            spk_emb = 0
+            spk_emb = 0 if speaker is None else speaker
         else:
             spk_emb = self.speaker_emb(speaker).unsqueeze(1)
-            spk_emb.mul_(self.speaker_emb_weight)
+        spk_emb.mul_(self.speaker_emb_weight)
 
         if self.lang_emb is None:
-            lang_emb = 0
+            lang_emb = 0 if language is None else language
         else:
             lang_emb = self.lang_emb(language).unsqueeze(1)
-            lang_emb.mul_(self.lang_emb_weight)
+        lang_emb.mul_(self.lang_emb_weight)
 
         # Input FFT
-        enc_out, enc_mask = self.encoder(inputs, conditioning=spk_emb + lang_emb)
+        enc_out, enc_mask = self.encoder(inputs, pre_cond=lang_emb, post_cond=spk_emb)
 
         # Predict durations
         log_dur_pred = self.duration_predictor(enc_out, enc_mask)
@@ -284,19 +291,19 @@ class FastPitch(nn.Module):
 
         # Calculate speaker embedding
         if self.speaker_emb is None:
-            spk_emb = 0
+            spk_emb = 0 if speaker is None else speaker
         else:
             spk_emb = self.speaker_emb(speaker).unsqueeze(1)
-            spk_emb.mul_(self.speaker_emb_weight)
+        spk_emb.mul_(self.speaker_emb_weight)
 
         if self.lang_emb is None:
-            lang_emb = 0
+            lang_emb = 0 if language is None else language
         else:
             lang_emb = self.lang_emb(language).unsqueeze(1)
-            lang_emb.mul_(self.lang_emb_weight)
+        lang_emb.mul_(self.lang_emb_weight)
 
         # Input FFT
-        enc_out, enc_mask = self.encoder(inputs, conditioning=spk_emb + lang_emb)
+        enc_out, enc_mask = self.encoder(inputs, pre_cond=lang_emb, post_cond=spk_emb)
 
         # Predict durations
         log_dur_pred = self.duration_predictor(enc_out, enc_mask).squeeze(-1)
@@ -346,21 +353,19 @@ class FastPitch(nn.Module):
               pitch_transform=None, max_duration=75, speaker=0, language=0):
 
         if self.speaker_emb is None:
-            spk_emb = 0
+            spk_emb = 0 if speaker is None else speaker
         else:
-            speaker = torch.ones(inputs.size(0)).long().to(inputs.device) * speaker
             spk_emb = self.speaker_emb(speaker).unsqueeze(1)
-            spk_emb.mul_(self.speaker_emb_weight)
+        spk_emb.mul_(self.speaker_emb_weight)
 
         if self.lang_emb is None:
-            lang_emb = 0
+            lang_emb = 0 if language is None else language
         else:
-            language = torch.ones(inputs.size(0)).long().to(inputs.device) * language
             lang_emb = self.lang_emb(language).unsqueeze(1)
-            lang_emb.mul_(self.lang_emb_weight)
+        lang_emb.mul_(self.lang_emb_weight)
 
         # Input FFT
-        enc_out, enc_mask = self.encoder(inputs, conditioning=spk_emb + lang_emb)
+        enc_out, enc_mask = self.encoder(inputs, pre_cond=lang_emb, post_cond=spk_emb)
 
         # Predict durations
         log_dur_pred = self.duration_predictor(enc_out, enc_mask)

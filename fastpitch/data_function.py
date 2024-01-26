@@ -38,7 +38,7 @@ from scipy import ndimage
 from scipy.stats import betabinom
 
 from common.layers import TacotronSTFT
-from common.utils import load_filepaths_and_text, load_wav_to_torch, to_gpu
+from common.utils import load_filepaths_and_text, load_speaker_lang_ids, load_wav_to_torch, to_gpu
 from common.text.text_processing import TextProcessor, PhoneProcessor, UnitProcessor
 
 
@@ -203,7 +203,7 @@ class TextMelAliLoader(torch.utils.data.Dataset):
         3) computes mel-spectrograms from audio files.
     """
     def __init__(self, dataset_path, audiopaths_and_text, text_cleaners, n_mel_channels,
-                 input_type='char', symbol_set='english_basic', n_speakers=1, n_langs=1,
+                 input_type='char', symbol_set='english_basic', speaker_ids=None, lang_ids=None,
                  load_mel_from_disk=True, load_durs_from_disk=True, load_pitch_from_disk=True,
                  max_wav_value=32768.0, sampling_rate=22050,
                  filter_length=512, hop_length=256, win_length=512,
@@ -218,8 +218,8 @@ class TextMelAliLoader(torch.utils.data.Dataset):
         self.dataset_path = dataset_path
         self.audiopaths_and_text = load_filepaths_and_text(
             dataset_path, audiopaths_and_text)
-        self.n_speakers = n_speakers
-        self.n_langs = n_langs
+        self.speaker_ids = load_speaker_lang_ids(speaker_ids)
+        self.lang_ids = load_speaker_lang_ids(lang_ids)
 
         self.input_type = input_type
         self.symbol_set = symbol_set
@@ -288,16 +288,10 @@ class TextMelAliLoader(torch.utils.data.Dataset):
                 self.sampling_rate, self.hop_length)
 
         speaker = fields['speaker']
-        if self.n_speakers > 1:
-            speaker = int(speaker)
-        else:
-            speaker = None
+        speaker = self.get_speaker(speaker)
 
         lang = fields['language']
-        if self.n_langs > 1:
-            lang = int(lang)
-        else:
-            lang = None
+        lang = self.get_lang(lang)
 
         return text, mel, len(text), dur, pitch, speaker, lang, fname
 
@@ -367,6 +361,32 @@ class TextMelAliLoader(torch.utils.data.Dataset):
             else:
                 assert pitch.shape[0] == text_len
         return pitch
+
+    def get_speaker(self, speaker):
+        if self.speaker_ids is not None:
+            # closed set of speaker ids
+            speaker = self.speaker_ids[speaker]
+        elif speaker is not None:
+            try:
+                # load speaker embeddings from disk
+                speaker = torch.load(speaker)
+            except FileNotFoundError:
+                pass
+        # speaker is None if not specified in meta file
+        return speaker
+
+    def get_lang(self, lang):
+        if self.lang_ids is not None:
+            # closed set of lang ids
+            lang = self.lang_ids[lang]
+        elif lang is not None:
+            try:
+                # load lang embeddings from disk
+                lang = torch.load(lang)
+            except FileNotFoundError:
+                pass
+        # lang is None if not specified in meta file
+        return lang
 
     def trim_silence(self, text, mel, durations, pitch, keep_sil_frames,
                      sampling_rate, hop_length):
@@ -492,14 +512,20 @@ class TextMelAliCollate():
             pitch_padded[i, :pitch.shape[0]] = pitch
 
         if batch[0][5] is not None:
-            speaker = torch.zeros_like(input_lengths)
+            if type(batch[0][5]) == int:
+                speaker = torch.zeros_like(input_lengths)
+            else:
+                speaker = torch.zeros((len(batch), batch[0][5].shape[1]))
             for i in range(len(ids_sorted_decreasing)):
                 speaker[i] = batch[ids_sorted_decreasing[i]][5]
         else:
             speaker = None
 
         if batch[0][6] is not None:
-            lang = torch.zeros_like(input_lengths)
+            if type(batch[0][6]) == int:
+                lang = torch.zeros_like(input_lengths)
+            else:
+                lang = torch.zeros((len(batch), batch[0][6].shape[1]))
             for i in range(len(ids_sorted_decreasing)):
                 lang[i] = batch[ids_sorted_decreasing[i]][6]
         else:
@@ -516,22 +542,25 @@ class TextMelAliCollate():
 def batch_to_gpu(batch, symbol_type='char', mas=False):
     text_padded, input_lengths, mel_padded, output_lengths, \
         len_x, dur_padded, dur_lens, pitch_padded, speaker, lang, fnames = batch
-    if symbol_type == 'pf':
-        text_padded = to_gpu(text_padded).float()
-    else:
-        text_padded = to_gpu(text_padded).long()
+
     input_lengths = to_gpu(input_lengths).long()
     mel_padded = to_gpu(mel_padded).float()
     output_lengths = to_gpu(output_lengths).long()
-    if mas:
-        dur_padded = to_gpu(dur_padded).float()
-    else:
-        dur_padded = to_gpu(dur_padded).long()
     pitch_padded = to_gpu(pitch_padded).float()
+
+    text_padded = to_gpu(text_padded)
+    text_padded = text_padded.float() if symbol_type == 'pf' else text_padded.long()
+
+    dur_padded = to_gpu(dur_padded)
+    dur_padded = dur_padded.float() if mas else dur_padded.long()
+
     if speaker is not None:
-        speaker = to_gpu(speaker).long()
+        speaker = to_gpu(speaker)
+        speaker = speaker.float() if speaker.dim() > 1 else speaker.long()
+
     if lang is not None:
-        lang = to_gpu(lang).long()
+        lang = to_gpu(lang)
+        lang = lang.float() if lang.dim() > 1 else lang.long()
 
     # Alignments act as both inputs and targets - pass shallow copies
     x = [text_padded, input_lengths, mel_padded, output_lengths,

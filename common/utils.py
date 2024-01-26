@@ -53,9 +53,8 @@ def load_wav_to_torch(full_path, force_sampling_rate=None):
 
 
 def load_filepaths_and_text(dataset_path, fnames, delim="|"):
-    data_fields = ['audio', 'pitch', 'duration']
-    cond_fields = ['speaker', 'language']
-    fields = data_fields + cond_fields + ['text']  # TODO: add fname here
+    data_fields = ['audio', 'pitch', 'duration', 'speaker', 'language']
+    fields = data_fields + ['text']  # TODO: add fname here
     fpaths_and_text = []
     for fname in fnames:
         with open(fname, encoding='utf-8') as f:
@@ -66,9 +65,24 @@ def load_filepaths_and_text(dataset_path, fnames, delim="|"):
             for line in reader:
                 for k, v in line.items():
                     if k in data_fields and v is not None:
-                        line[k] = os.path.join(dataset_path, v)
+                        data_path = os.path.join(dataset_path, v)
+                        if os.path.exists(data_path):
+                            line[k] = data_path
+                        else:
+                            line[k] = v  # pass through speaker/lang ids
                 fpaths_and_text.append(line)
     return fpaths_and_text
+
+
+def load_speaker_lang_ids(fname):
+    if fname is None:
+        return
+    lab2id = {}
+    with open(fname) as inf:
+        for line in inf:
+            lab, id_ = line.strip().split()
+            lab2id[lab] = int(id_)
+    return lab2id
 
 
 def to_gpu(x):

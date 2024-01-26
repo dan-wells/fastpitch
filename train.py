@@ -132,12 +132,12 @@ def parse_args(parser):
                       help='Type of text cleaners for input text.')
 
     cond = parser.add_argument_group('conditioning on additional attributes')
-    cond.add_argument('--n-speakers', type=int, default=1,
-                      help='Condition on speaker, value > 1 enables trainable '
-                      'speaker embeddings.')
-    cond.add_argument('--n-langs', type=int, default=1,
-                      help='Condition on language, value > 1 enables trainable '
-                      'language embeddings.')
+    cond.add_argument('--speaker-ids', type=str, default=None,
+                      help='File mapping from speaker labels to integer IDs for '
+                      'trainable speaker embeddings.')
+    cond.add_argument('--lang-ids', type=str, default=None,
+                      help='File mapping from language labels to integer IDs for '
+                      'trainable language embeddings.')
 
     audio = parser.add_argument_group('log generated audio')
     audio.add_argument('--hifigan', type=str, default='',

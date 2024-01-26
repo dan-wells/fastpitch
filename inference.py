@@ -44,11 +44,11 @@ import dllogger as DLLogger
 import models
 from dllogger import StdOutBackend, JSONStreamBackend, Verbosity
 
-from common import utils
 from common.tb_dllogger import (init_inference_metadata, stdout_metric_format,
                                 unique_log_fpath)
 from common.text.symbols import get_pad_idx
 from common.text.text_processing import TextProcessor, PhoneProcessor, UnitProcessor
+from common.utils import load_speaker_lang_ids
 from hifigan.denoiser import Denoiser
 from pitch_transform import pitch_transform_custom
 
@@ -121,13 +121,14 @@ def parse_args(parser):
     text_processing.add_argument('--text-cleaners', nargs='*', default=[], type=str,
                                  help='Type of text cleaners for input text.')
 
+    # TODO: speaker_ids expects str labels in meta, speaker still needs integer ids
     cond = parser.add_argument_group('conditioning on additional attributes')
-    cond.add_argument('--n-speakers', type=int, default=1,
-                      help='Number of speakers in the model.')
+    cond.add_argument('--speaker-ids', type=str, default=None,
+                      help='Speaker ID mapping.')
     cond.add_argument('--speaker', type=int, default=0,
                         help='Speaker ID for a multi-speaker model')
-    cond.add_argument('--n-langs', type=int, default=1,
-                      help='Number of languages in the model.')
+    cond.add_argument('--lang-ids', type=str, default=None,
+                      help='Language ID mapping.')
     cond.add_argument('--language', type=int, default=0,
                         help='Language ID for a multi-lingual model')
 
@@ -194,7 +195,8 @@ def load_fields(fpath):
 def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners,
                            batch_size=128, dataset=None,
                            load_mels=False, load_pitch=False, load_duration=False,
-                           load_speaker=False, load_lang=False):
+                           load_speaker=False, speaker_ids=None,
+                           load_lang=False, lang_ids=None):
     if input_type == 'char':
         tp = TextProcessor(symbol_set, text_cleaners)
     elif input_type == 'unit':
@@ -214,28 +216,35 @@ def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners
     fields['text_lens'] = torch.LongTensor([t.size(0) for t in fields['text']])
 
     if load_mels:
-        assert 'mel' in fields
         fields['mel'] = [
             torch.load(os.path.join(dataset, fields['mel'][i])).t()
             for i in tqdm(order, "Loading mels")]
         fields['mel_lens'] = torch.LongTensor([t.size(0) for t in fields['mel']])
     if load_pitch:
-        assert 'pitch' in fields
         fields['pitch'] = [
             torch.load(os.path.join(dataset, fields['pitch'][i])).float()
             for i in tqdm(order, "Loading pitches")]
         fields['pitch_lens'] = torch.LongTensor([t.size(0) for t in fields['pitch']])
     if load_duration:
-        assert 'duration' in fields
         fields['duration'] = [
             torch.load(os.path.join(dataset, fields['duration'][i]))
             for i in tqdm(order, "Loading durations")]
     if load_speaker:
-        assert 'speaker' in fields
-        fields['speaker'] = torch.LongTensor([int(fields['speaker'][i]) for i in order])
+        if speaker_ids is not None:
+            fields['speaker'] = torch.LongTensor([
+                speaker_ids[fields['speaker'][i]] for i in order])
+        else:
+            fields['speaker'] = torch.cat([
+                torch.load(os.path.join(dataset, fields['speaker'][i]))
+                for i in tqdm(order, "Loading speaker embeddings")])
     if load_lang:
-        assert 'language' in fields
-        fields['language'] = torch.LongTensor([int(fields['language'][i]) for i in order])
+        if lang_ids is not None:
+            fields['language'] = torch.LongTensor([
+                lang_ids[fields['language'][i]] for i in order])
+        else:
+            fields['language'] = torch.cat([
+                torch.load(os.path.join(dataset, fields['language'][i]))
+                for i in tqdm(order, "Loading language embeddings")])
     if 'output' in fields:
         fields['output'] = [fields['output'][i] for i in order]
     if 'mel_output' in fields:
@@ -276,7 +285,6 @@ def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners
             if type(batch[f]) is torch.Tensor:
                 batch[f] = batch[f].to(device)
         batches.append(batch)
-
     return batches
 
 
@@ -368,12 +376,16 @@ def main():
     if len(unk_args) > 0:
         raise ValueError(f'Invalid options {unk_args}')
 
+    speaker_ids = load_speaker_lang_ids(args.speaker_ids)
+    lang_ids = load_speaker_lang_ids(args.lang_ids)
+
     fields = load_fields(args.input)
     batches = prepare_input_sequence(
         fields, device, args.input_type, args.symbol_set, args.text_cleaners,
         args.batch_size, args.dataset_path, load_mels=(generator is None or 'mel' in fields),
         load_pitch=('pitch' in fields), load_duration=('duration' in fields),
-        load_speaker=('speaker' in fields), load_lang=('language' in fields))
+        load_speaker=('speaker' in fields), speaker_ids=speaker_ids,
+        load_lang=('language' in fields), lang_ids=lang_ids)
 
     # Use real data rather than synthetic - FastPitch predicts len
     if args.warmup_steps:

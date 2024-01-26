@@ -39,8 +39,8 @@ filenames and transcripts in your desired symbol set, with a header row and
 lines like:
 
 ```
-audio|text
-/path/to/data_root/wavs/audio1.wav|this is a text transcript
+audio|text[|speaker][|language]
+/path/to/data_root/wavs/audio1.wav|this is a text transcript[|<speaker_id>][|<language_id>]
 ```
 
 The expected path to the TextGrid file representing alignment information for
@@ -58,10 +58,9 @@ mels/audio1.pt|durations/audio1.pt|pitches/audio1.pt|<transcript>[|<speaker_id>]
 ```
 
 Note that paths to feature files are relative to the provided `--dataset-path`,
-which should also be passed to `train.py`. Integer speaker and language IDs are
-optional fields in case you want to train a multi-speaker or multi-lingual
-model (or use the associated embeddings to condition on any other factors of
-interest).
+which should also be passed to `train.py`. Optional `speaker` and `language`
+fields can be used to train a multi-speaker or multi-lingual model by passing
+either speaker or language labels or paths to embeddings stored on disk.
 
 ### Supported input representations
 
@@ -242,13 +241,22 @@ python train.py \
 Model checkpoints will be saved to `$CHECKPOINT_DIR` every 10 epochs, alongside
 TensorBoard logs. Make sure to pass `--cuda` to run on GPU if available.
 
-For multi-speaker data, specify `--n-speakers N` to learn additional speaker
-embeddings. Input metadata files should then include integer speaker IDs as the
-final field on each line, with IDs ranging between [0, `n-speakers` - 1]. You
-can assign integer speaker IDs using `scripts/add_speaker_id_to_meta.py`, as
-long as your audio filenames are of the form `<speaker_id>_<utterance_id>`.
-Similarly, you may pass `--n-langs N` for an additional conditioning factor,
-e.g. for language in a multi-lingual model.
+Two options are available for multi-speaker/multi-lingual data:
+
+- For joint training of speaker/language embeddings, include
+  `speaker`/`language` fields in your input metadata file and pass
+  `--{speaker,lang}-ids ${SPEAKER,LANG}_IDS.txt` files with lines like
+  `<speaker/lang_id> <int>` to set embedding indices.
+- To use pre-trained embeddings stored on disk, include paths to `.pt` files in
+  your metadata file and optionally pass `--{speaker,lang}-emb-dim $N_DIM` if
+  they do not match the symbol embedding dimensionality in your FastPitch model
+  (default `--symbols-embedding-dim 384`).
+
+Note that language embeddings are added to input symbol embeddings before
+passing through the encoder transformer stack, while speaker embeddings are
+added after the encoder but before duration and pitch prediction. To replicate
+previous behaviour in a multi-speaker, mono-lingual model, pass speaker IDs in
+the `language` field.
 
 To train using monotonic alignment search instead of passing explicit input
 symbol duration targets, pass `--use-mas`. 
@@ -281,8 +289,8 @@ does not matter):
 - `text`, transcripts of test utterances
 - `output`, path to save synthesized speech audio
 - `mel_output`, path to save predicted mel spectrogram features
-- `speaker`, integer speaker ID per utterance
-- `language`, integer language ID per utterance
+- `speaker`, speaker ID per utterance
+- `language`, language ID per utterance
 - `mel`, path to load mel spectrogram features, e.g. reference values for copy
   synthesis
 - `pitch`, path to load reference pitch values
@@ -293,7 +301,7 @@ our `train.py` run above, using a pre-trained HiFi-GAN vocoder:
 
 ```sh
 python inference.py \
-  --input $DATA_ROOT/test_meta.tsv \
+  --input $DATA_ROOT/test_meta.txt \
   --output $OUTPUT_DIR \
   --fastpitch $CHECKPOINT_DIR/FastPitch_checkpoint_100.pt \
   --input-type phone \
@@ -313,12 +321,12 @@ correct sampling rate. Predicted mel spectrograms are trimmed to remove noise
 durations calculated using `--stft-hop-length`, which should match the value of 
 `--hop-length` passed to `prepare_dataset.py`.
 
-For a multi-speaker FastPitch model, pass `--n-speakers` to match the value used
-with `train.py` and specify a target speaker ID using `--speaker N` to
-synthesize all utterances in the same target speaker's voice. If `test_meta.tsv`
+For a multi-speaker FastPitch model, pass a `--speaker-ids` file matching that
+used with `train.py` and specify a target speaker ID using `--speaker N` to
+synthesize all utterances in the same target speaker's voice. If `test_meta.txt`
 includes a `speaker` field then this will take precedence, and individual
 utterances can be synthesized each using a different speaker's voice. The same
-also applies to the `--n-langs` and `--language` flags for multi-lingual
+also applies to the `--lang-ids` and `--language` flags for multi-lingual
 models.
 
 If your model checkpoint uses depthwise separable convolutional layers, then
