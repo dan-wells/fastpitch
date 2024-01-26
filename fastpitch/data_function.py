@@ -54,6 +54,9 @@ def extract_durs_from_textgrid(tg_path, sampling_rate, hop_length, mel_len):
 
     phones, durs, start, end = parse_textgrid(
         textgrid.get_tier_by_name('phones'), sampling_rate, hop_length)
+    # TODO: what is this fixing?
+    if mel_len - sum(durs) == 1:
+        durs[-1] += 1
     durs = np.array(durs)
     assert durs.sum() == mel_len, f'Length mismatch: {fname}, {sum(durs)} != {mel_len}'
     return durs, phones, start, end
@@ -102,11 +105,12 @@ def extract_durs_from_unit_sequence(text, mel_len):
         durs[-1] += dur_diff
 
     durs = np.array(durs)
-    assert durs.sum() == mel_len
+    assert durs.sum() == mel_len, f'Length mismatch: {fname}, {sum(durs)} != {mel_len}'
     return durs, units
 
 
 def run_length_encode(symbols):
+    # TODO: use torch.unique_consecutive?
     units = []
     run_lengths = []
     for unit, run in groupby(symbols):
@@ -174,6 +178,9 @@ def estimate_pitch(wav, mel_len, fmin=40, fmax=600, sr=None, hop_length=256,
         pitch, voiced_flags, voiced_probs  = librosa.pyin(
             snd, fmin=fmin, fmax=fmax, sr=sr, hop_length=hop_length, fill_na=0.0)
 
+    # TODO: handle truncated hubert feats loaded from disk
+    #if pitch.shape[0] - mel_len <= 2:
+    #    pitch = pitch[:mel_len]
     assert np.abs(mel_len - pitch.shape[0]) <= 1.0, \
         f'{mel_len}, {pitch.shape[0]} ({pitch.shape})'
     return pitch
