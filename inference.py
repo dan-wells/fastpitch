@@ -121,15 +121,15 @@ def parse_args(parser):
     text_processing.add_argument('--text-cleaners', nargs='*', default=[], type=str,
                                  help='Type of text cleaners for input text.')
 
-    # TODO: speaker_ids expects str labels in meta, speaker still needs integer ids
     cond = parser.add_argument_group('conditioning on additional attributes')
     cond.add_argument('--speaker-ids', type=str, default=None,
                       help='Speaker ID mapping.')
-    cond.add_argument('--speaker', type=int, default=0,
+    # TODO: check, this should work for loading embeddings too
+    cond.add_argument('--speaker', type=str, default=None,
                         help='Speaker ID for a multi-speaker model')
     cond.add_argument('--lang-ids', type=str, default=None,
                       help='Language ID mapping.')
-    cond.add_argument('--language', type=int, default=0,
+    cond.add_argument('--language', type=str, default=None,
                         help='Language ID for a multi-lingual model')
 
     return parser
@@ -380,6 +380,12 @@ def main():
     lang_ids = load_speaker_lang_ids(args.lang_ids)
 
     fields = load_fields(args.input)
+    # override from command line
+    if args.speaker is not None:
+        fields['speaker'] = list(args.speaker for _ in fields['text'])
+    if args.language is not None:
+        fields['language'] = list(args.language for _ in fields['text'])
+
     batches = prepare_input_sequence(
         fields, device, args.input_type, args.symbol_set, args.text_cleaners,
         args.batch_size, args.dataset_path, load_mels=(generator is None or 'mel' in fields),

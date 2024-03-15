@@ -322,12 +322,11 @@ durations calculated using `--stft-hop-length`, which should match the value of
 `--hop-length` passed to `prepare_dataset.py`.
 
 For a multi-speaker FastPitch model, pass a `--speaker-ids` file matching that
-used with `train.py` and specify a target speaker ID using `--speaker N` to
-synthesize all utterances in the same target speaker's voice. If `test_meta.txt`
-includes a `speaker` field then this will take precedence, and individual
-utterances can be synthesized each using a different speaker's voice. The same
-also applies to the `--lang-ids` and `--language` flags for multi-lingual
-models.
+used with `train.py` and include a `speaker` field in `test_meta.txt` to
+synthesize utterances with the appropriate voices. Alternatively, pass
+`--speaker <speaker_id>` to override and synthesize all utterances using a
+single speaker's voice.  The same also applies to the `--lang-ids` and
+`--language` flags for multi-lingual models.
 
 If your model checkpoint uses depthwise separable convolutional layers, then
 also pass `--use-sepconv` to `inference.py`. Likewise, if trained with monotonic
