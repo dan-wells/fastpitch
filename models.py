@@ -121,9 +121,11 @@ def get_model_config(model_name, args):
             pitch_embedding_sepconv=args.pitch_embedding_sepconv,
             # speakers parameters
             speaker_ids=load_speaker_lang_ids(args.speaker_ids),
+            speaker_cond=args.speaker_cond,
             speaker_emb_dim=args.speaker_emb_dim,
             speaker_emb_weight=args.speaker_emb_weight,
             lang_ids=load_speaker_lang_ids(args.lang_ids),
+            lang_cond=args.lang_cond,
             lang_emb_dim=args.lang_emb_dim,
             lang_emb_weight=args.lang_emb_weight
         )

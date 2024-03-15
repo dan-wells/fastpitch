@@ -128,10 +128,16 @@ def parse_fastpitch_args(parent, add_help=False):
                       help='Pitch embedding conv-1D kernel size')
     cond.add_argument('--pitch-embedding-sepconv', action='store_true',
                       help='Use depthwise separable convolutions')
+    cond.add_argument('--speaker-cond', default=['pre'], nargs='*', type=str,
+                      choices=['pre', 'post'], help='Add speaker conditioning '
+                      'pre- or post-encoder transformer stack')
     cond.add_argument('--speaker-emb-dim', default=384, type=int,
                       help='Speaker embedding dim')
     cond.add_argument('--speaker-emb-weight', default=1.0, type=float,
                       help='Scale speaker embedding')
+    cond.add_argument('--lang-cond', default=['pre'], nargs='*', type=str,
+                      choices=['pre', 'post'], help='Add language conditioning '
+                      'pre- or post-encoder transformer stack')
     cond.add_argument('--lang-emb-dim', default=384, type=int,
                       help='Speaker embedding dim')
     cond.add_argument('--lang-emb-weight', default=1.0, type=float,

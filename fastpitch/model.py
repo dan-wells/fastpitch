@@ -116,8 +116,8 @@ class FastPitch(nn.Module):
                  pitch_predictor_sepconv, p_pitch_predictor_dropout,
                  pitch_predictor_n_layers,
                  pitch_embedding_kernel_size, pitch_embedding_sepconv,
-                 speaker_ids, speaker_emb_dim, speaker_emb_weight,
-                 lang_ids, lang_emb_dim, lang_emb_weight):
+                 speaker_ids, speaker_cond, speaker_emb_dim, speaker_emb_weight,
+                 lang_ids, lang_cond, lang_emb_dim, lang_emb_weight):
         super(FastPitch, self).__init__()
 
         self.encoder = FFTransformer(
@@ -137,6 +137,7 @@ class FastPitch(nn.Module):
             sepconv=in_fft_sepconv or use_sepconv,
         )
 
+        self.speaker_cond = speaker_cond
         self.speaker_ids = speaker_ids
         if self.speaker_ids is not None:
             self.speaker_emb = nn.Embedding(len(self.speaker_ids), symbols_embedding_dim)
@@ -147,6 +148,7 @@ class FastPitch(nn.Module):
             self.speaker_emb = None
         self.speaker_emb_weight = speaker_emb_weight
 
+        self.lang_cond = lang_cond
         self.lang_ids = lang_ids
         if self.lang_ids is not None:
             self.lang_emb = nn.Embedding(len(self.lang_ids), symbols_embedding_dim)
@@ -243,21 +245,30 @@ class FastPitch(nn.Module):
         inputs, _, mel_tgt, _, dur_tgt, _, pitch_tgt, speaker, language = inputs
         mel_max_len = mel_tgt.size(2)
 
-        # Calculate speaker embedding
-        if self.speaker_emb is None:
-            spk_emb = 0 if speaker is None else speaker
-        else:
-            spk_emb = self.speaker_emb(speaker).unsqueeze(1)
-        spk_emb.mul_(self.speaker_emb_weight)
+        # Calculate speaker and language embeddings
+        cond_embs = {'pre': [], 'post': []}
 
-        if self.lang_emb is None:
-            lang_emb = 0 if language is None else language
-        else:
-            lang_emb = self.lang_emb(language).unsqueeze(1)
-        lang_emb.mul_(self.lang_emb_weight)
+        if speaker is not None and self.speaker_cond:
+            spk_emb = speaker if self.speaker_emb is None \
+                else self.speaker_emb(speaker).unsqueeze(1)
+            spk_emb.mul_(self.speaker_emb_weight)
+            for pos in self.speaker_cond:
+                cond_embs[pos].append(spk_emb)
+
+        if language is not None and self.lang_cond:
+            lang_emb = language if self.lang_emb is None \
+                else self.lang_emb(language).unsqueeze(1)
+            lang_emb.mul_(self.lang_emb_weight)
+            for pos in self.lang_cond:
+                cond_embs[pos].append(lang_emb)
+
+        pre_cond = torch.sum(torch.stack(
+            cond_embs['pre']), axis=0) if cond_embs['pre'] else None
+        post_cond = torch.sum(torch.stack(
+            cond_embs['post']), axis=0) if cond_embs['post'] else None
 
         # Input FFT
-        enc_out, enc_mask = self.encoder(inputs, pre_cond=lang_emb, post_cond=spk_emb)
+        enc_out, enc_mask = self.encoder(inputs, pre_cond=pre_cond, post_cond=post_cond)
 
         # Predict durations
         log_dur_pred = self.duration_predictor(enc_out, enc_mask)
@@ -289,21 +300,30 @@ class FastPitch(nn.Module):
         text_max_len = inputs.size(1)
         mel_max_len = mel_tgt.size(2)
 
-        # Calculate speaker embedding
-        if self.speaker_emb is None:
-            spk_emb = 0 if speaker is None else speaker
-        else:
-            spk_emb = self.speaker_emb(speaker).unsqueeze(1)
-        spk_emb.mul_(self.speaker_emb_weight)
+        # Calculate speaker and language embeddings
+        cond_embs = {'pre': [], 'post': []}
 
-        if self.lang_emb is None:
-            lang_emb = 0 if language is None else language
-        else:
-            lang_emb = self.lang_emb(language).unsqueeze(1)
-        lang_emb.mul_(self.lang_emb_weight)
+        if speaker is not None and self.speaker_cond:
+            spk_emb = speaker if self.speaker_emb is None \
+                else self.speaker_emb(speaker).unsqueeze(1)
+            spk_emb.mul_(self.speaker_emb_weight)
+            for pos in self.speaker_cond:
+                cond_embs[pos].append(spk_emb)
+
+        if language is not None and self.lang_cond:
+            lang_emb = language if self.lang_emb is None \
+                else self.lang_emb(language).unsqueeze(1)
+            lang_emb.mul_(self.lang_emb_weight)
+            for pos in self.lang_cond:
+                cond_embs[pos].append(lang_emb)
+
+        pre_cond = torch.sum(torch.stack(
+            cond_embs['pre']), axis=0) if cond_embs['pre'] else None
+        post_cond = torch.sum(torch.stack(
+            cond_embs['post']), axis=0) if cond_embs['post'] else None
 
         # Input FFT
-        enc_out, enc_mask = self.encoder(inputs, pre_cond=lang_emb, post_cond=spk_emb)
+        enc_out, enc_mask = self.encoder(inputs, pre_cond=pre_cond, post_cond=post_cond)
 
         # Predict durations
         log_dur_pred = self.duration_predictor(enc_out, enc_mask).squeeze(-1)
@@ -351,21 +371,30 @@ class FastPitch(nn.Module):
 
     def infer(self, inputs, pace=1.0, dur_tgt=None, pitch_tgt=None,
               pitch_transform=None, max_duration=75, speaker=0, language=0):
+        # Calculate speaker and language embeddings
+        cond_embs = {'pre': [], 'post': []}
 
-        if self.speaker_emb is None:
-            spk_emb = 0 if speaker is None else speaker
-        else:
-            spk_emb = self.speaker_emb(speaker).unsqueeze(1)
-        spk_emb.mul_(self.speaker_emb_weight)
+        if speaker is not None and self.speaker_cond:
+            spk_emb = speaker if self.speaker_emb is None \
+                else self.speaker_emb(speaker).unsqueeze(1)
+            spk_emb.mul_(self.speaker_emb_weight)
+            for pos in self.speaker_cond:
+                cond_embs[pos].append(spk_emb)
 
-        if self.lang_emb is None:
-            lang_emb = 0 if language is None else language
-        else:
-            lang_emb = self.lang_emb(language).unsqueeze(1)
-        lang_emb.mul_(self.lang_emb_weight)
+        if language is not None and self.lang_cond:
+            lang_emb = language if self.lang_emb is None \
+                else self.lang_emb(language).unsqueeze(1)
+            lang_emb.mul_(self.lang_emb_weight)
+            for pos in self.lang_cond:
+                cond_embs[pos].append(lang_emb)
+
+        pre_cond = torch.sum(torch.stack(
+            cond_embs['pre']), axis=0) if cond_embs['pre'] else None
+        post_cond = torch.sum(torch.stack(
+            cond_embs['post']), axis=0) if cond_embs['post'] else None
 
         # Input FFT
-        enc_out, enc_mask = self.encoder(inputs, pre_cond=lang_emb, post_cond=spk_emb)
+        enc_out, enc_mask = self.encoder(inputs, pre_cond=pre_cond, post_cond=post_cond)
 
         # Predict durations
         log_dur_pred = self.duration_predictor(enc_out, enc_mask)

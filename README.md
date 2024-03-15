@@ -252,11 +252,11 @@ Two options are available for multi-speaker/multi-lingual data:
   they do not match the symbol embedding dimensionality in your FastPitch model
   (default `--symbols-embedding-dim 384`).
 
-Note that language embeddings are added to input symbol embeddings before
-passing through the encoder transformer stack, while speaker embeddings are
-added after the encoder but before duration and pitch prediction. To replicate
-previous behaviour in a multi-speaker, mono-lingual model, pass speaker IDs in
-the `language` field.
+Note that by default both speaker and language embeddings are added to input
+symbol embeddings before passing through the encoder transformer stack. To
+change the position of either embedding, pass `--{speaker,lang}-cond [pre|post]`
+to add before (`pre`) or after (`post`). Passing multiple values will add the
+embedding at both positions, or an empty value will disable conditioning.
 
 To train using monotonic alignment search instead of passing explicit input
 symbol duration targets, pass `--use-mas`. 

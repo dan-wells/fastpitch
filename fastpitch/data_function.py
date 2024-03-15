@@ -374,11 +374,8 @@ class TextMelAliLoader(torch.utils.data.Dataset):
             # closed set of speaker ids
             speaker = self.speaker_ids[speaker]
         elif speaker is not None:
-            try:
-                # load speaker embeddings from disk
-                speaker = torch.load(speaker)
-            except FileNotFoundError:
-                pass
+            # load speaker embeddings from disk
+            speaker = torch.load(speaker)
         # speaker is None if not specified in meta file
         return speaker
 
@@ -387,11 +384,8 @@ class TextMelAliLoader(torch.utils.data.Dataset):
             # closed set of lang ids
             lang = self.lang_ids[lang]
         elif lang is not None:
-            try:
-                # load lang embeddings from disk
-                lang = torch.load(lang)
-            except FileNotFoundError:
-                pass
+            # load lang embeddings from disk
+            lang = torch.load(lang)
         # lang is None if not specified in meta file
         return lang
 
