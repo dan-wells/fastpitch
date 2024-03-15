@@ -276,7 +276,7 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
         val_num_frames = 0
         for i, batch in enumerate(val_loader):
             x, y, num_frames = batch_to_gpu(batch, collate_fn.symbol_type, mas=mas)
-            y_pred = model(x, use_gt_durations=use_gt_durations)
+            y_pred = model(x, use_gt_durations=use_gt_durations, use_gt_pitch=False)
             loss, meta = criterion(y_pred, y, is_training=False, meta_agg='sum')
 
             if mas:
