@@ -282,9 +282,10 @@ def validate(model, epoch, total_iter, criterion, valset, batch_size, collate_fn
             if mas:
                 _, _, _, _, _, _, attn_soft, attn_hard, _, _ = y_pred
                 binarization_loss = attention_kl_loss(attn_hard, attn_soft)
-                meta['kl_loss'] = binarization_loss.clone().detach() * kl_weight
-                meta['kl_weight'] = kl_weight
-                loss += kl_weight * binarization_loss
+                kl_loss = binarization_loss * kl_weight
+                loss += kl_loss
+                meta['kl_loss'] = kl_loss.clone().detach()
+                meta['kl_weight'] = kl_weight.clone().detach()
                 meta['align_loss'] = meta['attn_loss'] + meta['kl_loss']
 
             if distributed_run:
@@ -554,8 +555,8 @@ def train(rank, args):
 
     if args.distributed_run:
         model = DistributedDataParallel(
-            model, device_ids=[args.local_rank], output_device=args.local_rank)
-            #find_unused_parameters=True)
+            model, device_ids=[args.local_rank], output_device=args.local_rank,
+            find_unused_parameters=True)
 
     start_epoch = [1]
     start_iter = [0]
@@ -666,16 +667,18 @@ def train(rank, args):
                     if epoch >= args.kl_loss_start_epoch:
                         _, _, _, _, _, _, attn_soft, attn_hard, _, _ = y_pred
                         binarization_loss = attention_kl_loss(attn_hard, attn_soft)
-                        kl_weight = min((epoch - args.kl_loss_start_epoch) / args.kl_loss_warmup_epochs,
-                                        1.0) * args.kl_loss_weight
-                        meta['kl_loss'] = binarization_loss.clone().detach() * kl_weight
-                        meta['kl_weight'] = kl_weight
-                        loss += kl_weight * binarization_loss
+                        kl_weight = torch.tensor(
+                            min((epoch - args.kl_loss_start_epoch) / args.kl_loss_warmup_epochs,
+                                1.0) * args.kl_loss_weight, device=loss.device)
+                        kl_loss = binarization_loss * kl_weight
+                        loss += kl_loss
+                        meta['kl_loss'] = kl_loss.clone().detach()
+                        meta['kl_weight'] = kl_weight.clone().detach()
                     else:
-                        meta['kl_loss'] = torch.zeros_like(loss)
-                        meta['kl_weight'] = 0
-                        kl_weight = 0
                         binarization_loss = 0
+                        kl_weight = torch.tensor(0, device=loss.device)
+                        meta['kl_weight'] = kl_weight.clone().detach()
+                        meta['kl_loss'] = torch.zeros_like(loss).detach()
                     meta['align_loss'] = meta['attn_loss'] + meta['kl_loss']
 
                 loss /= args.grad_accumulation
