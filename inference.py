@@ -211,6 +211,7 @@ def prepare_input_sequence(fields, device, input_type, symbol_set, text_cleaners
         fields['text'] = [torch.LongTensor(tp.encode_text(text))
                           for text in tqdm(fields['text'], "Loading texts")]
     order = np.argsort([-t.size(0) for t in fields['text']])
+    fields['index'] = order.tolist()
 
     fields['text'] = [fields['text'][i] for i in order]
     fields['text_lens'] = torch.LongTensor([t.size(0) for t in fields['text']])
@@ -474,9 +475,9 @@ def main():
                         if 'mel_output' in b:
                             fname = b['mel_output'][i]
                         elif 'output' in b:
-                            fname = os.path.splitext(b['output'][i])[0] + '.pt'
+                            fname = f'{os.path.splitext(b["output"][i])[0]}.pt'
                         else:
-                            fname = f'mel_{all_utterances + i}.pt'
+                            fname = f'mel_{b["index"][i]}.pt'
                         mel_path = os.path.join(args.output, fname)
                         torch.save(_mel.clone().cpu(), mel_path)
 
@@ -501,7 +502,7 @@ def main():
                             audio[-fade_len:] *= fade_w.to(audio.device)
 
                         audio = audio / torch.max(torch.abs(audio))
-                        fname = b['output'][i] if 'output' in b else f'audio_{all_utterances + i}.wav'
+                        fname = b['output'][i] if 'output' in b else f'audio_{b["index"][i]}.wav'
                         audio_path = os.path.join(args.output, fname)
                         write(audio_path, args.sampling_rate, audio.cpu().numpy())
 
