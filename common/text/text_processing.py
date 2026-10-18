@@ -19,6 +19,10 @@ _combilex_to_ipa = {
     'z': 'z'
 }
 
+# Words for _wb markup; tuned for Scottish Gaelic, where internal hyphens
+# and leading/trailing apostrophes may be lexical rather than punctuation
+_wb_word_re = re.compile(r"('?\w+(?:['-]\w+)*'?)|\S")
+
 
 class PhoneProcessor(object):
     def __init__(self, symbol_set, symbol_type='phone'):
@@ -95,12 +99,17 @@ class UnitProcessor(object):
 # TODO: work out best defaults and neatest interface to set handle_sil,
 # and skip_spaces here (should they just go through cleaner_names?)
 class TextProcessor(object):
-    def __init__(self, symbol_set, cleaner_names, handle_sil=False, skip_spaces=False):
+    def __init__(self, symbol_set, cleaner_names, handle_sil=False, skip_spaces=False,
+                 mark_word_boundaries=None):
         self.symbols = get_symbols(symbol_set)
         self.cleaner_names = cleaner_names
         self.skip_spaces = skip_spaces
         self.handle_sil = handle_sil
         self.sil_symbols = ['sil', 'sp', 'spn']
+        if mark_word_boundaries is None:
+            self.mark_word_boundaries = symbol_set.endswith('_wb')
+        else:
+            self.mark_word_boundaries = mark_word_boundaries
 
         # Mappings from symbol to numeric ID and vice versa:
         self.symbol_to_id = {s: i for i, s in enumerate(self.symbols)}
@@ -141,6 +150,24 @@ class TextProcessor(object):
             if s_next not in self.sil_symbols and s_next is not None:
                 symbols.append(' ')  # restore spaces between words
 
+    def split_with_wb(self, text):
+        # mark first and last characters of each word, dropping spaces
+        # between words, e.g. Gaelic 'tha mi,' -> /t_wb h a_wb m_wb i_wb ,/
+        symbols = []
+        for s in text.split():
+            if self.handle_sil and s in self.sil_symbols:
+                symbols.append(s)
+                continue
+            for match in _wb_word_re.finditer(s):
+                word = match.group(1)
+                if word is None:
+                    symbols.append(match.group())
+                else:
+                    symbols.extend(
+                        c + '_wb' if i in (0, len(word) - 1) else c
+                        for i, c in enumerate(word))
+        return symbols
+
     def clean_text(self, text):
         for name in self.cleaner_names:
             cleaner = getattr(cleaners, name)
@@ -156,7 +183,9 @@ class TextProcessor(object):
         # while splitting other words into character sequences
         # TODO: check if this actually lines up with forced alignment
         # durations -- might need to skip spaces here
-        if self.handle_sil:
+        if self.mark_word_boundaries:
+            text = self.split_with_wb(text)
+        elif self.handle_sil:
             text = self.split_with_sil(text)
         # match character-level TextGrids which don't align spaces
         if self.skip_spaces:

@@ -60,6 +60,23 @@ def get_symbols(symbol_set='english_basic', symbol_type=None):
         _special = '-'
         _letters = 'abcdefghijklmnopqrstuvwxyz'
         symbols = list(_pad) + _silence + list(_special + _punctuation + _letters)
+    elif symbol_set == 'gaelic':
+        _pad = '_'
+        _lower = 'abcdefghilmnoprstuàèìòù'
+        _upper = 'ABCDEFGHILMNOPRSTUÀÈÌÒÙ'
+        _non_gaelic = 'jkqvwxyzJKQVWXYZ'
+        _punctuation = ' !"\'(),-./:;<?[]'
+        symbols = list(_pad + _lower + _upper + _non_gaelic + _punctuation)
+    elif symbol_set == 'gaelic_wb':
+        # lowercase characters with word boundary markup, intended for use
+        # with character-level alignments, e.g. 'tha mi' -> /t_wb h a_wb m_wb i_wb/
+        _pad = '_'
+        _silence = ['sil', 'sp']
+        _lower = 'abcdefghilmnoprstuàèìòù'
+        _non_gaelic = 'jkqvwxyz'
+        _punctuation = ' !"\'(),-./:;<?[]'
+        _wb = [i + '_wb' for i in _lower + _non_gaelic + _punctuation]
+        symbols = list(_pad) + _silence + list(_lower + _non_gaelic) + _wb + list(_punctuation)
     elif symbol_set == 'ipa':
         ft = PermissiveFeatureTable()
         _pad = ['_']
@@ -127,6 +144,24 @@ def get_symbols(symbol_set='english_basic', symbol_type=None):
             'v', 'w', 'x', 'y', 'z', 'zh',
         ]
         symbols = _pad + _silence + _oov + _phones
+    elif symbol_set == 'faclair':
+        _pad = ['_']
+        _silence = ['sil', 'sp']
+        _oov = ['spn']
+        _punc = '-,;:!?.\'"()[]'
+        _phones = [
+            'L', 'Lʲ', 'N', 'Nʲ', 'R', '[', 'a', 'ai', 'au', 'aː', 'b', 'ch',
+            'd', 'dh', 'dʲ', 'e', 'ei', 'eː', 'f', 'g', 'gʲ', 'h', 'hb', 'hd',
+            'hdʲ', 'hw', 'i', 'ia', 'iə', 'iː', 'j', 'jh', 'k', 'kʲ', 'l', 'm',
+            'n', 'o', 'oi', 'ou', 'oː', 'p', 'r', 'rʲ', 's', 't', 'th', 'tʲ',
+            'u', 'uh', 'ui', 'uə', 'uː', 'v', 'w', 'x', 'xg', 'xgʲ', 'z', 'ã',
+            'ãĩ', 'ãũ', 'ãː', 'ç', 'çg', 'çgʲ', 'õ', 'ĩ', 'ĩã', 'ĩə̃', 'ĩː',
+            'ŋ', 'ŋʲ', 'ũ', 'ũĩ', 'ũə̃', 'ũː', 'ɔ', 'ɔu', 'ɔː', 'ɔ̃', 'ɔ̃ũ', 'ɔ̃ː',
+            'ə', 'ɛ', 'ɛː', 'ɛ̃', 'ɛ̃ː', 'ɣ', 'ɤ', 'ɤi', 'ɤː', 'ɤ̃ĩ', 'ɤ̃ː', 'ɪ',
+            'ɯ', 'ɯi', 'ɯː', 'ɯ̃', 'ɯ̃ĩ', 'ɯ̃ː', 'ʃ', 'ʝ', 'ẽ', 'ẽĩ',
+        ]
+        _phones_wb = [i + '_wb' for i in _phones]
+        symbols = _pad + _silence + _oov + list(_punc) + _phones + _phones_wb
     else:
         raise Exception("{} symbol set does not exist".format(symbol_set))
     return symbols

@@ -73,6 +73,8 @@ are possible values for `--input-type` and second-level for `--symbol-set`:
     * `english_basic_lowercase`
     * `english_expanded`
     * `english_basic_sil`
+    * `gaelic`
+    * `gaelic_wb`
 - `phone` or `pf` (phonological feature vectors)
     * `arpabet`
     * `combilex`
@@ -82,6 +84,7 @@ are possible values for `--input-type` and second-level for `--symbol-set`:
     * `ipa_all`
     * `xsampa`
     * `english_basic_sil`
+    * `gaelic_wb`
 - `unit` (integer symbol IDs)
     * Size of symbol vocabulary
 
@@ -98,8 +101,9 @@ Additional notes:
     * You might want to insert additional space characters at the beginning and
       end of your text transcripts to represent any leading or trailing silence
       in the audio (especially if using  monotonic alignment search for duration
-      targets). Pass `add_spaces=True` when setting up your `TextProcessor` to
-      do this automatically.
+      targets). Pass `--text-cleaners surround_with_spaces` to do this
+      automatically, or `surround_with_sil` for symbol sets with explicit
+      silence tokens.
 - `phone`, `pf` and `unit` inputs should probably be individual symbols
   separated by spaces, e.g. an `xsampa` rendering of the phrase 'the cat'
   would have a transcript like `D @ k a t`
@@ -126,6 +130,10 @@ Additional notes:
       words into character sequences.
     * With `phone` inputs, where your input texts should be preprocessed to
       insert spaces between every character.
+- `gaelic_wb` is similar to `english_basic_sil`, but also marks the first and
+  last characters of each word with `_wb` (e.g. 'tha mi' &rarr; `t_wb h a_wb
+  m_wb i_wb`). This markup is added automatically for `char` inputs using a
+  symbol set ending in `_wb`.
 
 ### Acoustic feature extraction
 

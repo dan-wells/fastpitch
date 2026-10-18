@@ -59,6 +59,10 @@ def surround_with_spaces(text):
     return ' ' + text + ' '
 
 
+def surround_with_sil(text):
+    return 'sil ' + text + ' sil'
+
+
 def separate_acronyms(text):
     text = re.sub(r"([0-9]+)([a-zA-Z]+)", r"\1 \2", text)
     text = re.sub(r"([a-zA-Z]+)([0-9]+)", r"\1 \2", text)
